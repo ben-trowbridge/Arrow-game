@@ -26,6 +26,8 @@ from constants import (
     GRID_LINE,
     HEART_EMPTY,
     HEART_FULL,
+    HIT_TIME_PENALTY,
+    LEVEL_TIME,
     MAX_GRID_SIZE,
     PANEL_BG,
     START_LIVES,
@@ -69,6 +71,7 @@ class Game:
         self.score = 0
         self.lives = START_LIVES
         self.board = Board(BASE_GRID_SIZE)
+        self.time_left = LEVEL_TIME
 
     # -- level / game flow ------------------------------------------------
 
@@ -82,11 +85,13 @@ class Game:
         self.board = Board(self.grid_size_for_level(self.level))
         self.particles.clear()
         self.texts.clear()
+        self.time_left = LEVEL_TIME
         self.state = State.PLAYING
 
     def advance_level(self):
         self.level += 1
         self.board = Board(self.grid_size_for_level(self.level))
+        self.time_left = LEVEL_TIME
         self.state = State.PLAYING
 
     # -- input --------------------------------------------------------
@@ -145,10 +150,11 @@ class Game:
                 self.level_clear_timer = 1.6
         elif result == "hit":
             self.lives -= 1
+            self.time_left = max(0.0, self.time_left - HIT_TIME_PENALTY)
             self.shake_timer = 0.25
             spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10)
             self.sound.play_hit()
-            if self.lives <= 0:
+            if self.lives <= 0 or self.time_left <= 0:
                 self.state = State.GAME_OVER
                 self.sound.play_gameover()
 
@@ -174,6 +180,11 @@ class Game:
         self.texts = [t for t in self.texts if t.update(dt)]
         if self.shake_timer > 0:
             self.shake_timer = max(0.0, self.shake_timer - dt)
+        if self.state == State.PLAYING:
+            self.time_left = max(0.0, self.time_left - dt)
+            if self.time_left <= 0:
+                self.state = State.GAME_OVER
+                self.sound.play_gameover()
         if self.state == State.LEVEL_CLEAR:
             self.level_clear_timer -= dt
             if self.level_clear_timer <= 0:
@@ -197,6 +208,10 @@ class Game:
 
         remaining = self.font_small.render(f"ARROWS LEFT: {self.board.remaining()}", True, TEXT_DIM)
         self.screen.blit(remaining, (24, 108))
+
+        timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
+        timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
+        self.screen.blit(timer_text, (24, 134))
 
         heart_px = 6
         heart_gap = heart_px * 9
@@ -239,8 +254,8 @@ class Game:
         lines = [
             "Click an arrow to fire it toward the edge.",
             "Clear path? It blasts off screen. BOOM!",
-            "Hits another arrow? You lose a life.",
-            "Clear the whole board to level up.",
+            "Hits another arrow? You lose a life and 2 seconds.",
+            "Each level gives you 20 seconds. Clear it to level up.",
             "",
             "CLICK OR PRESS SPACE TO START",
         ]

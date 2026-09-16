@@ -12,10 +12,13 @@ The board is full of arrow tiles. Click one:
 - **Clear path to the edge?** It blasts off screen with a pixel explosion
   and a ridiculous 8-bit "yeah, man!" jingle. Score goes up.
 - **Path blocked by another arrow?** Collision — you lose one of your
-  three lives, with a screen shake and a buzzer sound.
+  three lives and 2 seconds off the clock, with a screen shake and a
+  buzzer sound.
 
-Clear every arrow on the board to advance to the next, bigger level.
-Run out of lives and it's game over.
+Each level gives you 20 seconds on the clock. Clear every arrow on the
+board before time runs out to advance to the next, bigger level (which
+resets the timer to 20 seconds). Run out of lives or run out of time and
+it's game over.
 
 Every generated board is guaranteed solvable — there's always at least
 one order you can clear it in — but a careless click order can still
