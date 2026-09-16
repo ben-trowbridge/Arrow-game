@@ -7,9 +7,10 @@ and two libraries.
 
 ## How to play
 
-The board is packed edge-to-edge with twisty arrow "snakes" — connected
-chains of 1 to several cells that bend around corners before their final
-straight leg. Click any cell belonging to one to fire the whole thing:
+The board is a dense, roughly 500-cell grid packed almost edge-to-edge
+with twisty arrow "snakes" — connected chains of 1 to several cells that
+bend around corners before their final straight leg. Click any cell
+belonging to one to fire the whole thing:
 
 - **Clear path off its last straight leg?** It blasts off screen with a
   pixel explosion and a ridiculous 8-bit "yeah, man!" jingle. Score goes
@@ -18,9 +19,10 @@ straight leg. Click any cell belonging to one to fire the whole thing:
   three lives and 2 seconds off the clock, with a screen shake and a
   buzzer sound.
 
-Each level gives you 20 seconds on the clock. Clear every arrow on the
-board before time runs out to advance to the next, bigger and twistier
-level (which resets the timer to 20 seconds). Run out of lives or run out
+The clock starts at 10 seconds plus 1 second per arrow on the board, so
+bigger, denser levels get proportionally more time. Clear every arrow
+before it runs out to advance to the next, bigger and twistier level
+(which resets the clock for the new board). Run out of lives or run out
 of time and it's game over.
 
 Every generated board is guaranteed solvable — there's always at least

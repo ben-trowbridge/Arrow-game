@@ -28,7 +28,8 @@ from constants import (
     HEART_EMPTY,
     HEART_FULL,
     HIT_TIME_PENALTY,
-    LEVEL_TIME,
+    LEVEL_TIME_BASE,
+    LEVEL_TIME_PER_PIECE,
     MAX_GRID_SIZE,
     MAX_SNAKE_LEN,
     PANEL_BG,
@@ -73,7 +74,9 @@ class Game:
         self.score = 0
         self.lives = START_LIVES
         self.board = Board(BASE_GRID_SIZE)
-        self.time_left = LEVEL_TIME
+        self.time_left = LEVEL_TIME_BASE
+        self.board_surface = pygame.Surface((BOARD_AREA, BOARD_AREA))
+        self.board_dirty = True
 
     # -- level / game flow ------------------------------------------------
 
@@ -83,6 +86,9 @@ class Game:
     def snake_len_for_level(self, level):
         return min(MAX_SNAKE_LEN, BASE_SNAKE_LEN + (level - 1) // 2)
 
+    def time_for_board(self):
+        return LEVEL_TIME_BASE + LEVEL_TIME_PER_PIECE * len(self.board.pieces)
+
     def start_new_game(self):
         self.level = 1
         self.score = 0
@@ -90,13 +96,15 @@ class Game:
         self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.particles.clear()
         self.texts.clear()
-        self.time_left = LEVEL_TIME
+        self.time_left = self.time_for_board()
+        self.board_dirty = True
         self.state = State.PLAYING
 
     def advance_level(self):
         self.level += 1
         self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
-        self.time_left = LEVEL_TIME
+        self.time_left = self.time_for_board()
+        self.board_dirty = True
         self.state = State.PLAYING
 
     # -- input --------------------------------------------------------
@@ -151,6 +159,7 @@ class Game:
                 spawn_burst(self.particles, prect.centerx, prect.centery, color, count=10)
             self.sound.play_clear()
             self.score += 10 * self.level * len(piece_cells)
+            self.board_dirty = True
             label = random.choice(CELEBRATIONS)
             self.texts.append(FloatingText(label, cx, cy, ACCENT, self.font_small))
             if self.board.is_cleared():
@@ -228,42 +237,56 @@ class Game:
         for i in range(START_LIVES):
             draw_heart(self.screen, (start_x + i * heart_gap, 30), heart_px, i < self.lives)
 
-    def draw_board(self, offset=(0, 0)):
-        ox, oy = offset
-        board_rect = pygame.Rect(BOARD_LEFT + ox, BOARD_TOP + oy, BOARD_AREA, BOARD_AREA)
-        self.screen.fill(GRID_BG, board_rect)
+    def _cell_rect_local(self, gx, gy):
+        cell_px = self.cell_size()
+        return pygame.Rect(int(gx * cell_px), int(gy * cell_px), int(cell_px) + 1, int(cell_px) + 1)
+
+    def _render_board_surface(self):
+        # Redrawing every one of a few hundred bent pieces (each several
+        # pixel-matrix arrows plus track bars) is too slow to repeat every
+        # single frame once boards get into the hundreds of cells, and the
+        # board only actually changes when a piece clears -- so render it
+        # once into an offscreen surface and just blit that until dirtied.
+        surf = self.board_surface
+        surf.fill(GRID_BG)
 
         n = self.board.size
         cell_px = self.cell_size()
         for i in range(n + 1):
-            x = BOARD_LEFT + ox + int(i * cell_px)
-            pygame.draw.line(self.screen, GRID_LINE, (x, BOARD_TOP + oy), (x, BOARD_TOP + oy + BOARD_AREA))
-            y = BOARD_TOP + oy + int(i * cell_px)
-            pygame.draw.line(self.screen, GRID_LINE, (BOARD_LEFT + ox, y), (BOARD_LEFT + ox + BOARD_AREA, y))
+            x = int(i * cell_px)
+            pygame.draw.line(surf, GRID_LINE, (x, 0), (x, BOARD_AREA))
+            y = int(i * cell_px)
+            pygame.draw.line(surf, GRID_LINE, (0, y), (BOARD_AREA, y))
 
         track_px = max(6, int(cell_px * 0.3))
         for piece in self.board.pieces:
             color = ARROW_COLORS[piece.direction]
 
             for i in range(len(piece.cells) - 1):
-                r1 = self.cell_rect(*piece.cells[i])
-                r2 = self.cell_rect(*piece.cells[i + 1])
-                cx1, cy1 = r1.centerx + ox, r1.centery + oy
-                cx2, cy2 = r2.centerx + ox, r2.centery + oy
+                r1 = self._cell_rect_local(*piece.cells[i])
+                r2 = self._cell_rect_local(*piece.cells[i + 1])
+                cx1, cy1 = r1.centerx, r1.centery
+                cx2, cy2 = r2.centerx, r2.centery
                 if cx1 == cx2:
                     track = pygame.Rect(cx1 - track_px // 2, min(cy1, cy2), track_px, abs(cy2 - cy1))
                 else:
                     track = pygame.Rect(min(cx1, cx2), cy1 - track_px // 2, abs(cx2 - cx1), track_px)
-                self.screen.fill(color, track)
+                surf.fill(color, track)
 
             last = len(piece.cells) - 1
             for i, (gx, gy) in enumerate(piece.cells):
-                rect = self.cell_rect(gx, gy)
-                rect.x += ox
-                rect.y += oy
+                rect = self._cell_rect_local(gx, gy)
                 inset = 6 if i == last else 11
-                draw_arrow(self.screen, piece.local_direction(i), rect, inset=inset, color=color)
+                draw_arrow(surf, piece.local_direction(i), rect, inset=inset, color=color)
 
+    def draw_board(self, offset=(0, 0)):
+        ox, oy = offset
+        if self.board_dirty:
+            self._render_board_surface()
+            self.board_dirty = False
+
+        board_rect = pygame.Rect(BOARD_LEFT + ox, BOARD_TOP + oy, BOARD_AREA, BOARD_AREA)
+        self.screen.blit(self.board_surface, (BOARD_LEFT + ox, BOARD_TOP + oy))
         pygame.draw.rect(self.screen, BORDER, board_rect, 4)
 
     def draw_particles_and_texts(self):
