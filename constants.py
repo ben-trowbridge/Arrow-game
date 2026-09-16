@@ -1,0 +1,32 @@
+"""Static config: window layout, sizing, and the retro color palette."""
+
+WINDOW_WIDTH = 760
+WINDOW_HEIGHT = 860
+FPS = 60
+
+BOARD_AREA = 640
+BOARD_LEFT = (WINDOW_WIDTH - BOARD_AREA) // 2
+BOARD_TOP = 170
+
+BASE_GRID_SIZE = 5
+MAX_GRID_SIZE = 9
+START_LIVES = 3
+
+# NES-ish palette
+BLACK = (10, 10, 16)
+WHITE = (244, 244, 244)
+BG = (18, 14, 36)
+PANEL_BG = (28, 22, 52)
+GRID_BG = (34, 28, 64)
+GRID_LINE = (58, 48, 96)
+BORDER = (90, 76, 150)
+
+UP_COLOR = (248, 96, 96)       # red
+RIGHT_COLOR = (120, 224, 120)  # green
+DOWN_COLOR = (96, 176, 248)    # blue
+LEFT_COLOR = (248, 216, 88)    # yellow
+
+ACCENT = (248, 176, 40)
+HEART_FULL = (248, 88, 120)
+HEART_EMPTY = (70, 40, 56)
+TEXT_DIM = (150, 140, 190)
