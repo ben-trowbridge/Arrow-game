@@ -16,6 +16,7 @@ from board import Board
 from constants import (
     ACCENT,
     BASE_GRID_SIZE,
+    BASE_SNAKE_LEN,
     BG,
     BOARD_AREA,
     BOARD_LEFT,
@@ -29,6 +30,7 @@ from constants import (
     HIT_TIME_PENALTY,
     LEVEL_TIME,
     MAX_GRID_SIZE,
+    MAX_SNAKE_LEN,
     PANEL_BG,
     START_LIVES,
     TEXT_DIM,
@@ -78,11 +80,14 @@ class Game:
     def grid_size_for_level(self, level):
         return min(MAX_GRID_SIZE, BASE_GRID_SIZE + level - 1)
 
+    def snake_len_for_level(self, level):
+        return min(MAX_SNAKE_LEN, BASE_SNAKE_LEN + (level - 1) // 2)
+
     def start_new_game(self):
         self.level = 1
         self.score = 0
         self.lives = START_LIVES
-        self.board = Board(self.grid_size_for_level(self.level))
+        self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.particles.clear()
         self.texts.clear()
         self.time_left = LEVEL_TIME
@@ -90,7 +95,7 @@ class Game:
 
     def advance_level(self):
         self.level += 1
-        self.board = Board(self.grid_size_for_level(self.level))
+        self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.time_left = LEVEL_TIME
         self.state = State.PLAYING
 
@@ -129,19 +134,23 @@ class Game:
         cell = self.cell_at_pixel(*pos)
         if cell is None:
             return
-        direction = self.board.arrows.get(cell)
-        if direction is None:
+        piece = self.board.cell_owner.get(cell)
+        if piece is None:
             return
 
+        piece_cells = list(piece.cells)
+        direction = piece.direction
         result = self.board.fire(cell)
         rect = self.cell_rect(*cell)
         cx, cy = rect.center
 
         if result == "clear":
             color = ARROW_COLORS[direction]
-            spawn_burst(self.particles, cx, cy, color)
+            for px, py in piece_cells:
+                prect = self.cell_rect(px, py)
+                spawn_burst(self.particles, prect.centerx, prect.centery, color, count=10)
             self.sound.play_clear()
-            self.score += 10 * self.level
+            self.score += 10 * self.level * len(piece_cells)
             label = random.choice(CELEBRATIONS)
             self.texts.append(FloatingText(label, cx, cy, ACCENT, self.font_small))
             if self.board.is_cleared():
@@ -232,11 +241,28 @@ class Game:
             y = BOARD_TOP + oy + int(i * cell_px)
             pygame.draw.line(self.screen, GRID_LINE, (BOARD_LEFT + ox, y), (BOARD_LEFT + ox + BOARD_AREA, y))
 
-        for (gx, gy), direction in self.board.arrows.items():
-            rect = self.cell_rect(gx, gy)
-            rect.x += ox
-            rect.y += oy
-            draw_arrow(self.screen, direction, rect)
+        track_px = max(6, int(cell_px * 0.3))
+        for piece in self.board.pieces:
+            color = ARROW_COLORS[piece.direction]
+
+            for i in range(len(piece.cells) - 1):
+                r1 = self.cell_rect(*piece.cells[i])
+                r2 = self.cell_rect(*piece.cells[i + 1])
+                cx1, cy1 = r1.centerx + ox, r1.centery + oy
+                cx2, cy2 = r2.centerx + ox, r2.centery + oy
+                if cx1 == cx2:
+                    track = pygame.Rect(cx1 - track_px // 2, min(cy1, cy2), track_px, abs(cy2 - cy1))
+                else:
+                    track = pygame.Rect(min(cx1, cx2), cy1 - track_px // 2, abs(cx2 - cx1), track_px)
+                self.screen.fill(color, track)
+
+            last = len(piece.cells) - 1
+            for i, (gx, gy) in enumerate(piece.cells):
+                rect = self.cell_rect(gx, gy)
+                rect.x += ox
+                rect.y += oy
+                inset = 6 if i == last else 11
+                draw_arrow(self.screen, piece.local_direction(i), rect, inset=inset, color=color)
 
         pygame.draw.rect(self.screen, BORDER, board_rect, 4)
 
@@ -252,8 +278,8 @@ class Game:
         self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, 220)))
 
         lines = [
-            "Click an arrow to fire it toward the edge.",
-            "Clear path? It blasts off screen. BOOM!",
+            "Click any cell of a twisty arrow to fire the whole thing.",
+            "Clear path off its final leg? It blasts off screen. BOOM!",
             "Hits another arrow? You lose a life and 2 seconds.",
             "Each level gives you 20 seconds. Clear it to level up.",
             "",

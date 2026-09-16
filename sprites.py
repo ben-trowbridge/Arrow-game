@@ -64,9 +64,9 @@ def draw_pixel_matrix(surface, matrix, top_left, pixel_size, color):
                 surface.fill(color, rect)
 
 
-def draw_arrow(surface, direction, cell_rect, inset=6):
+def draw_arrow(surface, direction, cell_rect, inset=6, color=None):
     matrix = ARROW_PATTERNS[direction]
-    color = ARROW_COLORS[direction]
+    color = color or ARROW_COLORS[direction]
     size = min(cell_rect.width, cell_rect.height) - inset * 2
     pixel_size = max(1, size // 7)
     matrix_px = pixel_size * 7
