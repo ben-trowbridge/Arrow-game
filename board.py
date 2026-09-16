@@ -2,14 +2,26 @@
 
 Generation trick: build the board up one PIECE at a time, in a random
 order. Each piece is a short, randomly-bent "snake" of cells (its body)
-running tail-first to a head cell that keeps going straight off-board in
-one direction; that straight lane from the head to the board edge must be
+running tail-first to a head cell that keeps going straight in one
+direction for a bounded "exit window" of cells; that stretch must be
 clear of every piece placed *so far*. Solving is then just that placement
-order played backwards: the last piece placed has a clear lane against
-everyone placed before it, so it's always the first one safe to fire, and
-so on down the line. Every generated board is therefore solvable -- a
-careless firing order can still dead-end a piece into a hit, exactly like
-the original single-cell version, just with longer, twistier bodies now.
+order played backwards: the last piece placed had a clear exit lane
+against everyone placed before it, so it's always the first one safe to
+fire, and so on down the line. Every generated board is therefore
+solvable -- a careless firing order can still dead-end a piece into a
+hit, exactly like the original single-cell version, just with longer,
+twistier bodies now.
+
+The exit window is deliberately a small, FIXED distance rather than the
+literal board edge. A piece near the edge naturally needs only a short
+clear run to get off the board, while a piece in the middle of a large
+board would need a run of a dozen-plus clear cells -- so with an
+edge-to-edge rule, cells near the border are trivially, permanently safe
+(nothing can ever re-occupy a lane once the board starts getting
+cleared), while the interior is nearly unplaceable. Capping the window
+at a small constant makes every cell face the same-sized challenge
+regardless of where it sits, so a solvable order is required everywhere
+on the board, not just away from the edges.
 """
 
 import random
@@ -26,7 +38,7 @@ class Dir(Enum):
 DIRS = list(Dir)
 DIR_FROM_DELTA = {d.value: d for d in DIRS}
 
-MIN_FILL_RATIO = 0.85
+MIN_FILL_RATIO = 0.75
 
 
 class Piece:
@@ -53,19 +65,14 @@ class Piece:
         return DIR_FROM_DELTA[(nx - x, ny - y)]
 
 
+EXIT_WINDOW = 4
+
+
 class Board:
     def __init__(self, size, max_piece_len=3):
         self.size = size
         self.max_piece_len = max_piece_len
-        # A piece only needs a clear run of this many cells past its head,
-        # not the literal board edge. Requiring a fully-clear lane all the
-        # way across a large board makes the odds of any lane staying open
-        # collapse exponentially as the board fills up (each extra cell in
-        # the lane multiplies in another chance of a blocker), so above a
-        # small board this cap is what keeps ~500-cell boards fillable at
-        # all. Below it, min(size - 1, 8) just equals the true edge
-        # distance, so nothing changes from the original edge-to-edge rule.
-        self.exit_window = min(size - 1, 8)
+        self.exit_window = min(size - 1, EXIT_WINDOW)
         self.pieces = []
         self.cell_owner = {}  # (x, y) -> Piece
         self._generate()
@@ -86,26 +93,17 @@ class Board:
             cy += dy
         return cells
 
-    def _biased_direction(self, cell):
-        """Pick a direction favoring whichever edge is nearest -- short
-        exit lanes are far more likely to end up clear, which matters a
-        lot once the board gets big."""
-        weighted = [(d, 1.0 / (len(self._lane_cells(cell, d)) + 1) ** 2) for d in DIRS]
-        total = sum(w for _, w in weighted)
-        r = random.uniform(0, total)
-        upto = 0.0
-        for d, w in weighted:
-            upto += w
-            if upto >= r:
-                return d
-        return weighted[-1][0]
-
     def _walk(self, start, occupied):
         """One biased random walk from `start`, as long as possible up to
         `max_piece_len`. Returns (cells, path_dirs) where path_dirs[i] is
-        the direction of the step from cells[i] to cells[i + 1]."""
+        the direction of the step from cells[i] to cells[i + 1]. The
+        initial direction is plain uniform-random -- NOT biased toward
+        whichever edge is nearest -- so a piece's exit direction doesn't
+        correlate with where it sits on the board; that correlation is
+        exactly what made every arrow near a given edge the same color
+        and trivially safe."""
         n = self.size
-        direction = self._biased_direction(start)
+        direction = random.choice(DIRS)
         cells = [start]
         visited = {start}
         path_dirs = []
@@ -114,7 +112,7 @@ class Board:
             x, y = cells[-1]
             candidates = list(DIRS)
             random.shuffle(candidates)
-            if random.random() < 0.55 and direction in candidates:
+            if random.random() < 0.75 and direction in candidates:
                 candidates.remove(direction)
                 candidates.insert(0, direction)
             moved = False
@@ -138,7 +136,7 @@ class Board:
 
         return cells, path_dirs
 
-    def _grow_piece(self, start, occupied, tries=3):
+    def _grow_piece(self, start, occupied, tries=8):
         best = None
         for _ in range(tries):
             cells, path_dirs = self._walk(start, occupied)
@@ -150,7 +148,8 @@ class Board:
             for length in range(len(cells), 0, -1):
                 head = cells[length - 1]
                 if length == 1:
-                    dirs_to_try = sorted(DIRS, key=lambda d: (len(self._lane_cells(head, d)), random.random()))
+                    dirs_to_try = DIRS[:]
+                    random.shuffle(dirs_to_try)
                 else:
                     dirs_to_try = [path_dirs[length - 2]]
                 own_body = set(cells[:length])
@@ -168,36 +167,16 @@ class Board:
                 break
         return best
 
-    def _scan_order(self):
-        """Process cells from the interior outward, ranked by distance to
-        their own nearest edge. Every cell on a straight lane toward some
-        edge is strictly closer to that edge than the cell behind it, so
-        this ordering guarantees that when a cell is processed, the lane
-        toward ITS nearest edge is still completely untouched -- that's
-        what makes near-total fill possible at all (a fully random or
-        raster order leaves the board full of isolated, unfillable holes
-        by the time it's half full), and it naturally spreads all four
-        exit directions across the board by geography instead of one
-        direction dominating everything, which a single raster sweep
-        does (every piece ends up pointing the same way, into whichever
-        stretch the sweep hasn't reached yet)."""
-        n = self.size
-        cells = [(x, y) for y in range(n) for x in range(n)]
-
-        def depth(cell):
-            x, y = cell
-            return min(x, n - 1 - x, y, n - 1 - y)
-
-        return sorted(cells, key=lambda c: (-depth(c), random.random()))
-
     def _generate(self, max_attempts=20):
         n = self.size
+        all_cells = [(x, y) for y in range(n) for x in range(n)]
 
         best_pieces = None
         best_fill = -1
 
         for _ in range(max_attempts):
-            order = self._scan_order()
+            order = all_cells[:]
+            random.shuffle(order)
             occupied = set()
             pieces = []
 
