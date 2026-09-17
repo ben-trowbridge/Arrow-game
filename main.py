@@ -319,6 +319,13 @@ class Game:
         track_px = max(self.S(6), int(cell_px * 0.3))
         for piece in self.board.pieces:
             color = ARROW_COLORS[piece.direction]
+            # The arrow glyph's shape reads as a cross/chevron only because
+            # of the gaps *within* it -- if the track underneath is drawn
+            # in the exact same bright color, those gaps show the same
+            # color as the filled parts and the arrow's silhouette
+            # disappears into the track. Dimming the track keeps the path
+            # visibly connected while letting the bright arrow stand out.
+            track_color = tuple(c // 2 for c in color)
 
             for i in range(len(piece.cells) - 1):
                 r1 = self._cell_rect_local(*piece.cells[i])
@@ -329,7 +336,7 @@ class Game:
                     track = pygame.Rect(cx1 - track_px // 2, min(cy1, cy2), track_px, abs(cy2 - cy1))
                 else:
                     track = pygame.Rect(min(cx1, cx2), cy1 - track_px // 2, abs(cx2 - cx1), track_px)
-                surf.fill(color, track)
+                surf.fill(track_color, track)
 
             last = len(piece.cells) - 1
             for i, (gx, gy) in enumerate(piece.cells):

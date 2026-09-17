@@ -5,13 +5,18 @@
 # multiplies these -- and every other fixed pixel value in main.py, via
 # its S() helper -- at runtime, so the whole window/board/text/effects
 # rescale together instead of just the board area.
-DESIGN_WINDOW_WIDTH = 900
-DESIGN_WINDOW_HEIGHT = 1056
-DESIGN_BOARD_AREA = 800
+DESIGN_WINDOW_WIDTH = 760
+DESIGN_WINDOW_HEIGHT = 850
+DESIGN_BOARD_AREA = 600
 DESIGN_BOARD_TOP = 216
 FPS = 60
 
-DEFAULT_UI_SCALE = 1.5
+# Default/min sized to comfortably fit inside a single 1920x1080 display
+# with room for the taskbar -- the old 1.5x default (on top of an already
+# fairly tall board) produced an 1584px-tall window, taller than a
+# standard 1080p screen, which is why it wouldn't behave normally with
+# window snapping/dragging.
+DEFAULT_UI_SCALE = 1.0
 MIN_UI_SCALE = 1.0
 MAX_UI_SCALE = 2.0
 UI_SCALE_STEP = 0.25
