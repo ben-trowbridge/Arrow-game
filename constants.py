@@ -1,12 +1,18 @@
 """Static config: window layout, sizing, and the retro color palette."""
 
-WINDOW_WIDTH = 900
-WINDOW_HEIGHT = 1056
+# Single knob for the whole UI's pixel scale -- every fixed pixel value in
+# main.py (fonts, HUD/title/game-over layout, borders, insets) is derived
+# from this via the S() helper, so bumping this one number rescales the
+# entire window/board/text/etc. together instead of just the board area.
+UI_SCALE = 1.5
+
+WINDOW_WIDTH = round(900 * UI_SCALE)
+WINDOW_HEIGHT = round(1056 * UI_SCALE)
 FPS = 60
 
-BOARD_AREA = 800
+BOARD_AREA = round(800 * UI_SCALE)
 BOARD_LEFT = (WINDOW_WIDTH - BOARD_AREA) // 2
-BOARD_TOP = 216
+BOARD_TOP = round(216 * UI_SCALE)
 
 BASE_GRID_SIZE = 22
 MAX_GRID_SIZE = 26

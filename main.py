@@ -35,6 +35,7 @@ from constants import (
     PANEL_BG,
     START_LIVES,
     TEXT_DIM,
+    UI_SCALE,
     WHITE,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -43,6 +44,13 @@ from sprites import ARROW_COLORS, FloatingText, draw_arrow, draw_heart, spawn_bu
 
 CELEBRATIONS = ["YEAH!", "BOOM!", "RADICAL!", "NICE!", "WHOA!", "BLASTED!", "ZOOM!"]
 SEED_CHARS = "0123456789ABCDEF"
+
+
+def S(px):
+    """Scale a fixed pixel value (font size, layout offset, border width,
+    ...) by the global UI_SCALE, so every hardcoded position in this file
+    grows or shrinks together with the window/board constants."""
+    return round(px * UI_SCALE)
 
 
 class State(Enum):
@@ -59,9 +67,9 @@ class Game:
         pygame.display.set_caption("ARROW BLAST")
         self.clock = pygame.time.Clock()
 
-        self.font_small = pygame.font.SysFont("couriernew", 18, bold=True)
-        self.font_med = pygame.font.SysFont("couriernew", 26, bold=True)
-        self.font_big = pygame.font.SysFont("couriernew", 54, bold=True)
+        self.font_small = pygame.font.SysFont("couriernew", S(18), bold=True)
+        self.font_med = pygame.font.SysFont("couriernew", S(26), bold=True)
+        self.font_big = pygame.font.SysFont("couriernew", S(54), bold=True)
 
         self.sound = SoundEngine()
 
@@ -230,34 +238,34 @@ class Game:
     # -- draw -------------------------------------------------------------
 
     def draw_hud(self):
-        panel = pygame.Rect(0, 0, WINDOW_WIDTH, BOARD_TOP - 20)
+        panel = pygame.Rect(0, 0, WINDOW_WIDTH, BOARD_TOP - S(20))
         self.screen.fill(PANEL_BG, panel)
-        pygame.draw.rect(self.screen, BORDER, panel, 4)
+        pygame.draw.rect(self.screen, BORDER, panel, S(4))
 
         title = self.font_med.render("ARROW BLAST", True, ACCENT)
-        self.screen.blit(title, (24, 16))
+        self.screen.blit(title, (S(24), S(16)))
 
         level_text = self.font_small.render(f"LEVEL {self.level}", True, WHITE)
-        self.screen.blit(level_text, (24, 56))
+        self.screen.blit(level_text, (S(24), S(56)))
 
         score_text = self.font_small.render(f"SCORE {self.score:06d}", True, WHITE)
-        self.screen.blit(score_text, (24, 82))
+        self.screen.blit(score_text, (S(24), S(82)))
 
         remaining = self.font_small.render(f"ARROWS LEFT: {self.board.remaining()}", True, TEXT_DIM)
-        self.screen.blit(remaining, (24, 108))
+        self.screen.blit(remaining, (S(24), S(108)))
 
         timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
         timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
-        self.screen.blit(timer_text, (24, 134))
+        self.screen.blit(timer_text, (S(24), S(134)))
 
         seed_text = self.font_small.render(f"SEED: {self.seed}", True, TEXT_DIM)
-        self.screen.blit(seed_text, (24, 160))
+        self.screen.blit(seed_text, (S(24), S(160)))
 
-        heart_px = 6
+        heart_px = S(6)
         heart_gap = heart_px * 9
-        start_x = WINDOW_WIDTH - 24 - heart_gap * START_LIVES
+        start_x = WINDOW_WIDTH - S(24) - heart_gap * START_LIVES
         for i in range(START_LIVES):
-            draw_heart(self.screen, (start_x + i * heart_gap, 30), heart_px, i < self.lives)
+            draw_heart(self.screen, (start_x + i * heart_gap, S(30)), heart_px, i < self.lives)
 
     def _cell_rect_local(self, gx, gy):
         cell_px = self.cell_size()
@@ -280,7 +288,7 @@ class Game:
             y = int(i * cell_px)
             pygame.draw.line(surf, GRID_LINE, (0, y), (BOARD_AREA, y))
 
-        track_px = max(6, int(cell_px * 0.3))
+        track_px = max(S(6), int(cell_px * 0.3))
         for piece in self.board.pieces:
             color = ARROW_COLORS[piece.direction]
 
@@ -298,7 +306,7 @@ class Game:
             last = len(piece.cells) - 1
             for i, (gx, gy) in enumerate(piece.cells):
                 rect = self._cell_rect_local(gx, gy)
-                inset = 6 if i == last else 11
+                inset = S(6) if i == last else S(11)
                 draw_arrow(surf, piece.local_direction(i), rect, inset=inset, color=color)
 
     def draw_board(self, offset=(0, 0)):
@@ -309,7 +317,7 @@ class Game:
 
         board_rect = pygame.Rect(BOARD_LEFT + ox, BOARD_TOP + oy, BOARD_AREA, BOARD_AREA)
         self.screen.blit(self.board_surface, (BOARD_LEFT + ox, BOARD_TOP + oy))
-        pygame.draw.rect(self.screen, BORDER, board_rect, 4)
+        pygame.draw.rect(self.screen, BORDER, board_rect, S(4))
 
     def draw_particles_and_texts(self):
         for p in self.particles:
@@ -320,7 +328,7 @@ class Game:
     def draw_title_screen(self):
         self.screen.fill(BG)
         title = self.font_big.render("ARROW BLAST", True, ACCENT)
-        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, 220)))
+        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, S(220))))
 
         lines = [
             "Click any cell of a twisty arrow to fire the whole thing.",
@@ -331,36 +339,37 @@ class Game:
             f"SEED (0-9, A-F): {self.seed_input.ljust(8, '_')}",
             "CLICK, SPACE, OR ENTER TO START",
         ]
-        y = 340
+        y = S(340)
         for line in lines:
             color = ACCENT if ("CLICK" in line or "SEED" in line) else WHITE
             text = self.font_small.render(line, True, color)
             self.screen.blit(text, text.get_rect(center=(WINDOW_WIDTH // 2, y)))
-            y += 34
+            y += S(34)
 
         demo_dirs = list(ARROW_COLORS.keys())
+        box = S(64)
         for i, d in enumerate(demo_dirs):
-            rect = pygame.Rect(WINDOW_WIDTH // 2 - 150 + i * 80, 600, 64, 64)
+            rect = pygame.Rect(WINDOW_WIDTH // 2 - S(150) + i * S(80), S(600), box, box)
             pygame.draw.rect(self.screen, GRID_BG, rect)
-            pygame.draw.rect(self.screen, BORDER, rect, 3)
-            draw_arrow(self.screen, d, rect)
+            pygame.draw.rect(self.screen, BORDER, rect, S(3))
+            draw_arrow(self.screen, d, rect, inset=S(6))
 
     def draw_game_over_screen(self):
         self.screen.fill(BG)
         title = self.font_big.render("GAME OVER", True, (232, 80, 80))
-        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, 260)))
+        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, S(260))))
 
         score_text = self.font_med.render(f"FINAL SCORE: {self.score}", True, WHITE)
-        self.screen.blit(score_text, score_text.get_rect(center=(WINDOW_WIDTH // 2, 340)))
+        self.screen.blit(score_text, score_text.get_rect(center=(WINDOW_WIDTH // 2, S(340))))
 
         level_text = self.font_small.render(f"REACHED LEVEL {self.level}", True, TEXT_DIM)
-        self.screen.blit(level_text, level_text.get_rect(center=(WINDOW_WIDTH // 2, 380)))
+        self.screen.blit(level_text, level_text.get_rect(center=(WINDOW_WIDTH // 2, S(380))))
 
         seed_text = self.font_small.render(f"SEED WAS: {self.seed}", True, TEXT_DIM)
-        self.screen.blit(seed_text, seed_text.get_rect(center=(WINDOW_WIDTH // 2, 410)))
+        self.screen.blit(seed_text, seed_text.get_rect(center=(WINDOW_WIDTH // 2, S(410))))
 
         hint = self.font_small.render("CLICK OR PRESS R TO PLAY AGAIN", True, ACCENT)
-        self.screen.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, 460)))
+        self.screen.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, S(460))))
 
     def draw_level_clear_overlay(self):
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
@@ -371,7 +380,7 @@ class Game:
 
     def draw_scanlines(self):
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        for y in range(0, WINDOW_HEIGHT, 3):
+        for y in range(0, WINDOW_HEIGHT, S(3)):
             pygame.draw.line(overlay, (0, 0, 0, 28), (0, y), (WINDOW_WIDTH, y))
         self.screen.blit(overlay, (0, 0))
 
@@ -382,7 +391,7 @@ class Game:
             self.screen.fill(BG)
             offset = (0, 0)
             if self.shake_timer > 0:
-                mag = int(6 * (self.shake_timer / 0.25))
+                mag = int(S(6) * (self.shake_timer / 0.25))
                 offset = (random.randint(-mag, mag), random.randint(-mag, mag))
 
             self.draw_hud()

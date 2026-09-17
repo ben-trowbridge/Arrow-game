@@ -8,7 +8,7 @@ import random
 import pygame
 
 from board import Dir
-from constants import DOWN_COLOR, LEFT_COLOR, RIGHT_COLOR, UP_COLOR
+from constants import DOWN_COLOR, LEFT_COLOR, RIGHT_COLOR, UI_SCALE, UP_COLOR
 
 
 def _rotate_cw(matrix):
@@ -87,7 +87,7 @@ class Particle:
 
     def __init__(self, x, y, color):
         angle = random.uniform(0, 2 * math.pi)
-        speed = random.uniform(70, 260)
+        speed = random.uniform(70, 260) * UI_SCALE
         self.x = x
         self.y = y
         self.vx = math.cos(angle) * speed
@@ -95,13 +95,13 @@ class Particle:
         self.color = color
         self.life = random.uniform(0.3, 0.65)
         self.age = 0.0
-        self.size = random.randint(3, 7)
+        self.size = round(random.randint(3, 7) * UI_SCALE)
 
     def update(self, dt):
         self.age += dt
         self.x += self.vx * dt
         self.y += self.vy * dt
-        self.vy += 320 * dt
+        self.vy += 320 * UI_SCALE * dt
         return self.age < self.life
 
     def draw(self, surface):
@@ -128,7 +128,7 @@ class FloatingText:
 
     def update(self, dt):
         self.age += dt
-        self.y -= 60 * dt
+        self.y -= 60 * UI_SCALE * dt
         return self.age < self.life
 
     def draw(self, surface):
