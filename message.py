@@ -22,27 +22,49 @@ FONT_5ROW = {
     " ": ["..", "..", "..", "..", ".."],
 }
 
+# "M"'s crossbar sits in the middle of what would otherwise be two full
+# 5-cell verticals -- merging it as a horizontal run splits each side into
+# a lone top cell plus a shorter 3-run, which reads worse than just
+# leaving it as two long strokes with a single dot between them. Letters
+# in this set skip horizontal-run merging entirely.
+VERTICAL_ONLY_LETTERS = {"M"}
 
-def text_to_cells(lines, gap=1, line_gap=1):
-    """Render uppercase text lines into a set of "on" (x, y) cells,
-    left-aligned line by line, plus the overall (width, height)."""
-    cells = set()
+
+def _glyph_cells(ch):
+    return {
+        (col, row)
+        for row, line in enumerate(FONT_5ROW[ch])
+        for col, v in enumerate(line)
+        if v == "#"
+    }
+
+
+def _layout_glyphs(lines, gap=1, line_gap=1):
+    """Compute each glyph's (char, x_offset, y_offset) placement across
+    all lines, plus the overall (width, height) of the rendered block."""
+    placements = []
     max_width = 0
     y_offset = 0
     for line in lines:
-        glyphs = [FONT_5ROW[ch] for ch in line]
         x_offset = 0
-        for glyph in glyphs:
-            for row_idx, row in enumerate(glyph):
-                for col_idx, ch in enumerate(row):
-                    if ch == "#":
-                        cells.add((x_offset + col_idx, y_offset + row_idx))
-            x_offset += len(glyph[0]) + gap
-        max_width = max(max_width, x_offset - gap if glyphs else 0)
+        for ch in line:
+            placements.append((ch, x_offset, y_offset))
+            x_offset += len(FONT_5ROW[ch][0]) + gap
+        if line:
+            max_width = max(max_width, x_offset - gap)
         y_offset += 5 + line_gap
 
     total_height = y_offset - line_gap if lines else 0
-    return cells, max_width, total_height
+    return placements, max_width, total_height
+
+
+def text_to_cells(lines, gap=1, line_gap=1):
+    """Render uppercase text lines into a flat set of "on" (x, y) cells,
+    plus the overall (width, height). Kept for callers that just want
+    the shape, not a piece decomposition."""
+    placements, width, height = _layout_glyphs(lines, gap, line_gap)
+    cells = {(x + xo, y + yo) for ch, xo, yo in placements for x, y in _glyph_cells(ch)}
+    return cells, width, height
 
 
 def _vertical_piece(x, run_ys):
@@ -62,47 +84,49 @@ def _horizontal_piece(y, run_xs):
     return Piece(cells, Dir.UP)
 
 
-def _decompose_runs(allowed_cells):
-    """Break the message's "on" cells into pieces. Horizontal runs of 2+
-    cells are claimed first -- a flat stroke like the top of an "I" or
-    the crossbar of an "A" reads as one clean bent piece exiting UP from
-    its right end, rather than as isolated dots -- and each remaining
-    cell is grouped into a vertical run by column, exiting UP from its
-    topmost cell, exactly as before.
+def _decompose_runs(cells, horizontal_merge=True):
+    """Break a glyph's "on" cells into pieces. Horizontal runs of 2+
+    cells are claimed first when `horizontal_merge` is set -- a flat
+    stroke like the top of an "I" or the crossbar of an "A" reads as one
+    clean bent piece exiting UP from its right end, rather than as
+    isolated dots -- and each remaining cell is grouped into a vertical
+    run by column, exiting UP from its topmost cell.
 
     Every piece here exits UP, and every piece's own body cells all sit
     at or below its own head's row: trivially true for a horizontal run
     (the whole body shares the head's row) and true by construction for
     a vertical run (the head is its topmost cell). That means sorting
-    ALL pieces by head row ascending and firing in that order is always
-    valid, regardless of whether a piece's body is a horizontal bar or a
-    vertical stroke: anything sitting above a piece's head belongs to
-    some other piece whose own head row is strictly smaller, so it always
-    fires first. Clear top to bottom.
+    ALL pieces (across every glyph) by head row ascending and firing in
+    that order is always valid, regardless of whether a piece's body is
+    a horizontal bar or a vertical stroke: anything sitting above a
+    piece's head belongs to some other piece whose own head row is
+    strictly smaller, so it always fires first. Clear top to bottom.
     """
-    by_row = {}
-    for x, y in allowed_cells:
-        by_row.setdefault(y, []).append(x)
-
     claimed = set()
     pieces = []
-    for y, xs in by_row.items():
-        xs.sort()
-        run = [xs[0]]
-        for x in xs[1:]:
-            if x == run[-1] + 1:
-                run.append(x)
-            else:
-                if len(run) >= 2:
-                    pieces.append(_horizontal_piece(y, run))
-                    claimed.update((rx, y) for rx in run)
-                run = [x]
-        if len(run) >= 2:
-            pieces.append(_horizontal_piece(y, run))
-            claimed.update((rx, y) for rx in run)
+
+    if horizontal_merge:
+        by_row = {}
+        for x, y in cells:
+            by_row.setdefault(y, []).append(x)
+
+        for y, xs in by_row.items():
+            xs.sort()
+            run = [xs[0]]
+            for x in xs[1:]:
+                if x == run[-1] + 1:
+                    run.append(x)
+                else:
+                    if len(run) >= 2:
+                        pieces.append(_horizontal_piece(y, run))
+                        claimed.update((rx, y) for rx in run)
+                    run = [x]
+            if len(run) >= 2:
+                pieces.append(_horizontal_piece(y, run))
+                claimed.update((rx, y) for rx in run)
 
     by_column = {}
-    for x, y in allowed_cells - claimed:
+    for x, y in cells - claimed:
         by_column.setdefault(x, []).append(y)
 
     for x, ys in by_column.items():
@@ -121,16 +145,25 @@ def _decompose_runs(allowed_cells):
 
 def build_message_board(lines):
     """A Board whose arrows spell out `lines` (each an uppercase string)
-    instead of a random puzzle -- see _decompose_runs() for how the
-    letters' cells become pieces."""
-    cells, width, height = text_to_cells(lines)
+    instead of a random puzzle. Each glyph is decomposed independently
+    (see _decompose_runs()) so a letter like "M" can opt out of
+    horizontal-run merging while the rest still get it, then every
+    piece is shifted into its final position in the overall layout."""
+    placements, width, height = _layout_glyphs(lines)
     size = max(width, height)
     ox = (size - width) // 2
     oy = (size - height) // 2
-    allowed_cells = {(x + ox, y + oy) for x, y in cells}
 
+    pieces = []
+    for ch, xo, yo in placements:
+        local_cells = _glyph_cells(ch)
+        horizontal_merge = ch not in VERTICAL_ONLY_LETTERS
+        for piece in _decompose_runs(local_cells, horizontal_merge=horizontal_merge):
+            shifted_cells = [(x + xo + ox, y + yo + oy) for x, y in piece.cells]
+            pieces.append(Piece(shifted_cells, piece.direction))
+
+    allowed_cells = {c for p in pieces for c in p.cells}
     board = Board(size, allowed_cells=allowed_cells, skip_generate=True)
-    pieces = _decompose_runs(allowed_cells)
     for piece in pieces:
         for c in piece.cells:
             board.cell_owner[c] = piece
