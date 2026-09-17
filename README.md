@@ -7,18 +7,22 @@ it's just Python and two libraries.
 
 ## How to play
 
-The board is a dense, roughly 500-cell grid packed almost edge-to-edge
-with twisty arrow "snakes" — connected chains of 1 to several cells that
-bend around corners before their final straight leg. Click any cell
-belonging to one to fire the whole thing:
+The board is a dense grid packed almost edge-to-edge with twisty arrow
+"snakes" — connected chains of 1 to several cells that bend around
+corners before their final straight leg. Click any cell belonging to one
+to fire the whole thing, and watch it slide in that direction:
 
-- **Clear path off its last straight leg?** It blasts off screen with a
+- **Clear path all the way to the edge?** It slides off the board with a
   pixel explosion and a ridiculous 8-bit "yeah, man!" jingle. Score goes
-  up (more for longer arrows).
-- **Path blocked by another arrow?** Collision — you lose one of your
-  three lives and time gets added to the clock, with a screen shake and
-  a buzzer sound. The penalty escalates with each heart you lose on the
-  current board: 2 seconds for the first, up to 10 seconds for the last.
+  up (more for longer arrows). The check runs the entire remaining
+  distance to the edge, not just the next few cells, so anything sitting
+  anywhere in its path — however far off — will stop it.
+- **Something in the way?** It slides forward until it bumps into
+  whatever's blocking it, then springs back to where it started — you
+  lose one of your three lives and time gets added to the clock, with a
+  screen shake and a buzzer sound. The penalty escalates with each heart
+  you lose on the current board: 2 seconds for the first, up to 10
+  seconds for the last.
 
 Each board gives you a fresh 5-minute clock, counting up from 0:00, and a
 full three hearts — both reset at the start of every board. The timer

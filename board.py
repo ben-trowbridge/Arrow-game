@@ -3,7 +3,7 @@
 Generation trick: build the board up one PIECE at a time, in a random
 order. Each piece is a short, randomly-bent "snake" of cells (its body)
 running tail-first to a head cell that keeps going straight in one
-direction for a bounded "exit window" of cells; that stretch must be
+direction, all the way to the board's edge; that entire run must be
 clear of every piece placed *so far*. Solving is then just that placement
 order played backwards: the last piece placed had a clear exit lane
 against everyone placed before it, so it's always the first one safe to
@@ -12,16 +12,14 @@ solvable -- a careless firing order can still dead-end a piece into a
 hit, exactly like the original single-cell version, just with longer,
 twistier bodies now.
 
-The exit window is deliberately a small, FIXED distance rather than the
-literal board edge. A piece near the edge naturally needs only a short
-clear run to get off the board, while a piece in the middle of a large
-board would need a run of a dozen-plus clear cells -- so with an
-edge-to-edge rule, cells near the border are trivially, permanently safe
-(nothing can ever re-occupy a lane once the board starts getting
-cleared), while the interior is nearly unplaceable. Capping the window
-at a small constant makes every cell face the same-sized challenge
-regardless of where it sits, so a solvable order is required everywhere
-on the board, not just away from the edges.
+The exit lane runs the full remaining distance to the board's edge, not
+some artificial shorter window -- what a player sees on screen (a clear
+runway all the way off the board) is exactly what firing requires. That
+does mean a piece deep in the interior needs a genuinely long clear run
+in some direction to be placeable at all, which is a harder placement
+constraint than a short fixed window would be; the generator compensates
+by simply trying many random placement orders per board and keeping the
+one that fills the most cells (see `_generate`'s `attempts` loop).
 """
 
 import random
@@ -38,7 +36,13 @@ class Dir(Enum):
 DIRS = list(Dir)
 DIR_FROM_DELTA = {d.value: d for d in DIRS}
 
-MIN_FILL_RATIO = 0.75
+# Requiring a genuinely clear run all the way to the board's edge (see
+# the module docstring) makes 0.75 unreachable in reasonable time on
+# anything but the smallest boards -- generation would burn through
+# every attempt without ever hitting it. 0.60 is comfortably achievable
+# within a handful of attempts, keeping level load times well under a
+# second instead of several.
+MIN_FILL_RATIO = 0.60
 
 
 class Piece:
@@ -65,9 +69,6 @@ class Piece:
         return DIR_FROM_DELTA[(nx - x, ny - y)]
 
 
-EXIT_WINDOW = 4
-
-
 class Board:
     def __init__(
         self,
@@ -75,14 +76,18 @@ class Board:
         max_piece_len=3,
         allowed_cells=None,
         min_fill_ratio=None,
-        attempts=20,
+        attempts=10,
         exit_window=None,
         prune=True,
         skip_generate=False,
     ):
         self.size = size
         self.max_piece_len = max_piece_len
-        self.exit_window = min(size - 1, EXIT_WINDOW if exit_window is None else exit_window)
+        # `_lane_cells` stops the moment it steps off the board, so a
+        # window this large always reaches the true edge from anywhere on
+        # the grid -- `exit_window` stays overridable (e.g. tests) but
+        # there's no reason to cap it below the board size any more.
+        self.exit_window = size if exit_window is None else exit_window
         # Restricting placement to a specific cell set (rather than every
         # cell in the size x size square) is what lets a Board spell out a
         # fixed shape -- everything outside that set is simply never
@@ -195,7 +200,7 @@ class Board:
                 break
         return best
 
-    def _generate(self, max_attempts=20):
+    def _generate(self, max_attempts=10):
         n = self.size
         if self.allowed_cells is not None:
             all_cells = list(self.allowed_cells)
@@ -301,6 +306,17 @@ class Board:
 
     def is_cleared(self):
         return not self.pieces
+
+    def lane_travel(self, piece):
+        """How many cells `piece` can advance before either running off
+        the board (lane fully clear) or slamming into the first occupied
+        cell in its path -- used to animate a fire attempt (how far to
+        slide) before/independent of actually resolving it via fire()."""
+        lane = self._lane_cells(piece.head, piece.direction)
+        for i, c in enumerate(lane):
+            if c in self.cell_owner:
+                return i
+        return len(lane)
 
     def fire(self, cell):
         """Fire the piece at `cell`. Returns 'clear', 'hit', or None."""

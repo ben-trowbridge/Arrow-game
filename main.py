@@ -56,6 +56,53 @@ MESSAGE_SEEDS = {
     "SAMGARMN": ["YOU ARE", "MISSED."],
 }
 
+FIRE_CELLS_PER_SECOND = 18.0
+HIT_RETURN_DURATION = 0.15
+
+
+class FiringAnimation:
+    """Purely visual: a piece sliding forward after being fired. A clear
+    keeps going in `direction` until it's traveled `travel_cells` (its
+    full lane, off the board); a hit travels the same way up to whatever
+    blocked it, then springs back to rest. The actual game-logic outcome
+    (score/lives/board state) is already resolved by the time this is
+    created -- this only tracks how far along the animation is."""
+
+    def __init__(self, piece, direction_vec, travel_cells, outcome):
+        self.piece = piece
+        self.direction_vec = direction_vec
+        self.outcome = outcome
+        # A small minimum so even a zero-distance block still visibly
+        # bumps forward, and an already-at-the-edge clear still visibly
+        # slides rather than just vanishing in place.
+        self.travel_cells = max(travel_cells, 0.5 if outcome == "hit" else 1.0)
+        self.forward_duration = self.travel_cells / FIRE_CELLS_PER_SECOND
+        self.return_duration = HIT_RETURN_DURATION if outcome == "hit" else 0.0
+        self.phase = "forward"
+        self.age = 0.0
+        self.done = False
+
+    def update(self, dt):
+        self.age += dt
+        if self.phase == "forward" and self.age >= self.forward_duration:
+            if self.outcome == "clear":
+                self.done = True
+            else:
+                self.phase = "return"
+                self.age = 0.0
+        elif self.phase == "return" and self.age >= self.return_duration:
+            self.done = True
+        return not self.done
+
+    def offset_cells(self):
+        if self.phase == "forward":
+            t = min(1.0, self.age / self.forward_duration) if self.forward_duration > 0 else 1.0
+            dist = self.travel_cells * t
+        else:
+            t = min(1.0, self.age / self.return_duration) if self.return_duration > 0 else 1.0
+            dist = self.travel_cells * (1.0 - t)
+        return (self.direction_vec[0] * dist, self.direction_vec[1] * dist)
+
 SCOREBOARD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scoreboard.json")
 SCOREBOARD_SIZE = 10
 SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
@@ -130,6 +177,7 @@ class Game:
         self.particles = []
         self.texts = []
         self.angel = None
+        self.firing_animations = []
         self.shake_timer = 0.0
         self.level_clear_timer = 0.0
 
@@ -216,6 +264,7 @@ class Game:
         self.particles.clear()
         self.texts.clear()
         self.angel = None
+        self.firing_animations = []
         self.board_dirty = True
         self.state = State.PLAYING
 
@@ -223,6 +272,7 @@ class Game:
         self.level += 1
         self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.angel = None
+        self.firing_animations = []
         self.lives = START_LIVES
         self.elapsed = 0.0
         self.hits_this_board = 0
@@ -376,9 +426,15 @@ class Game:
         piece = self.board.cell_owner.get(cell)
         if piece is None:
             return
+        if any(anim.piece is piece for anim in self.firing_animations):
+            # Already mid-slide-or-bounce from an earlier click -- ignore
+            # a rapid re-click rather than layering a second animation
+            # (and a second life/penalty on a hit) onto the same piece.
+            return
 
         piece_cells = list(piece.cells)
         direction = piece.direction
+        travel_cells = self.board.lane_travel(piece)
         result = self.board.fire(cell)
         rect = self.cell_rect(*cell)
         cx, cy = rect.center
@@ -391,6 +447,7 @@ class Game:
             self.sound.play_clear()
             self.score += 10 * self.level * len(piece_cells)
             self.board_dirty = True
+            self.firing_animations.append(FiringAnimation(piece, direction.value, travel_cells, "clear"))
             label = random.choice(CELEBRATIONS)
             self.texts.append(FloatingText(label, cx, cy, ACCENT, self.font_small, scale=self.ui_scale))
             if self.board.is_cleared():
@@ -426,6 +483,8 @@ class Game:
             self.shake_timer = 0.25
             spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10, scale=self.ui_scale)
             self.sound.play_hit()
+            self.board_dirty = True
+            self.firing_animations.append(FiringAnimation(piece, direction.value, travel_cells, "hit"))
             if self.lives <= 0 or (not infinite_time and self.elapsed >= GAME_TIME_LIMIT):
                 self._end_game()
 
@@ -497,6 +556,18 @@ class Game:
             self.angel = None
         if self.shake_timer > 0:
             self.shake_timer = max(0.0, self.shake_timer - dt)
+
+        still_animating = []
+        for anim in self.firing_animations:
+            if anim.update(dt):
+                still_animating.append(anim)
+            else:
+                # The static board surface excluded this piece (clear:
+                # gone for good; hit: mid-bounce) -- redraw it now that
+                # the animation's done, so it reappears at rest.
+                self.board_dirty = True
+        self.firing_animations = still_animating
+
         if self.state == State.PLAYING:
             self.total_time += dt
             if not getattr(self.board, "infinite_time", False):
@@ -565,6 +636,42 @@ class Game:
         cell_px = self.cell_size()
         return pygame.Rect(int(gx * cell_px), int(gy * cell_px), int(cell_px) + 1, int(cell_px) + 1)
 
+    def _draw_piece(self, surf, piece, offset_px=(0, 0)):
+        """Draw one piece's track + per-cell arrows onto `surf`, optionally
+        shifted by `offset_px` -- shared by the cached static board render
+        and the live firing-animation overlay so a sliding/bouncing piece
+        looks identical to its resting appearance."""
+        ox, oy = offset_px
+        color = ARROW_COLORS[piece.direction]
+        cell_px = self.cell_size()
+        track_px = max(self.S(6), int(cell_px * 0.3))
+        # The arrow glyph's shape reads as a cross/chevron only because
+        # of the gaps *within* it -- if the track underneath is drawn
+        # in the exact same bright color, those gaps show the same
+        # color as the filled parts and the arrow's silhouette
+        # disappears into the track. Dimming the track keeps the path
+        # visibly connected while letting the bright arrow stand out.
+        track_color = tuple(c // 2 for c in color)
+
+        def rect_at(gx, gy):
+            return self._cell_rect_local(gx, gy).move(ox, oy)
+
+        for i in range(len(piece.cells) - 1):
+            r1 = rect_at(*piece.cells[i])
+            r2 = rect_at(*piece.cells[i + 1])
+            cx1, cy1 = r1.centerx, r1.centery
+            cx2, cy2 = r2.centerx, r2.centery
+            if cx1 == cx2:
+                track = pygame.Rect(cx1 - track_px // 2, min(cy1, cy2), track_px, abs(cy2 - cy1))
+            else:
+                track = pygame.Rect(min(cx1, cx2), cy1 - track_px // 2, abs(cx2 - cx1), track_px)
+            surf.fill(track_color, track)
+
+        last = len(piece.cells) - 1
+        for i, (gx, gy) in enumerate(piece.cells):
+            rect = rect_at(gx, gy)
+            draw_arrow(surf, piece.local_direction(i), rect, is_head=(i == last), color=color)
+
     def _render_board_surface(self):
         # Redrawing every one of a few hundred bent pieces (each several
         # pixel-matrix arrows plus track bars) is too slow to repeat every
@@ -582,33 +689,14 @@ class Game:
             y = int(i * cell_px)
             pygame.draw.line(surf, GRID_LINE, (0, y), (self.board_area, y))
 
-        track_px = max(self.S(6), int(cell_px * 0.3))
+        # Pieces currently sliding/bouncing get drawn separately, on top,
+        # by draw_firing_animations() -- skip them here so they don't also
+        # render twice at their resting position underneath.
+        animating_ids = {id(anim.piece) for anim in self.firing_animations}
         for piece in self.board.pieces:
-            color = ARROW_COLORS[piece.direction]
-            # The arrow glyph's shape reads as a cross/chevron only because
-            # of the gaps *within* it -- if the track underneath is drawn
-            # in the exact same bright color, those gaps show the same
-            # color as the filled parts and the arrow's silhouette
-            # disappears into the track. Dimming the track keeps the path
-            # visibly connected while letting the bright arrow stand out.
-            track_color = tuple(c // 2 for c in color)
-
-            for i in range(len(piece.cells) - 1):
-                r1 = self._cell_rect_local(*piece.cells[i])
-                r2 = self._cell_rect_local(*piece.cells[i + 1])
-                cx1, cy1 = r1.centerx, r1.centery
-                cx2, cy2 = r2.centerx, r2.centery
-                if cx1 == cx2:
-                    track = pygame.Rect(cx1 - track_px // 2, min(cy1, cy2), track_px, abs(cy2 - cy1))
-                else:
-                    track = pygame.Rect(min(cx1, cx2), cy1 - track_px // 2, abs(cx2 - cx1), track_px)
-                surf.fill(track_color, track)
-
-            last = len(piece.cells) - 1
-            for i, (gx, gy) in enumerate(piece.cells):
-                rect = self._cell_rect_local(gx, gy)
-                inset = self.S(6) if i == last else self.S(11)
-                draw_arrow(surf, piece.local_direction(i), rect, inset=inset, color=color)
+            if id(piece) in animating_ids:
+                continue
+            self._draw_piece(surf, piece)
 
     def draw_board(self, offset=(0, 0)):
         ox, oy = offset
@@ -619,6 +707,18 @@ class Game:
         board_rect = pygame.Rect(self.board_left + ox, self.board_top + oy, self.board_area, self.board_area)
         self.screen.blit(self.board_surface, (self.board_left + ox, self.board_top + oy))
         pygame.draw.rect(self.screen, BORDER, board_rect, self.S(4))
+
+    def draw_firing_animations(self, offset=(0, 0)):
+        if not self.firing_animations:
+            return
+        ox, oy = offset
+        cell_px = self.cell_size()
+        overlay = pygame.Surface((self.board_area, self.board_area), pygame.SRCALPHA)
+        for anim in self.firing_animations:
+            dx_cells, dy_cells = anim.offset_cells()
+            offset_px = (round(dx_cells * cell_px), round(dy_cells * cell_px))
+            self._draw_piece(overlay, anim.piece, offset_px=offset_px)
+        self.screen.blit(overlay, (self.board_left + ox, self.board_top + oy))
 
     def draw_particles_and_texts(self):
         for p in self.particles:
@@ -655,7 +755,7 @@ class Game:
             rect = pygame.Rect(self.window_width // 2 - self.S(150) + i * self.S(80), self.S(660), box, box)
             pygame.draw.rect(self.screen, GRID_BG, rect)
             pygame.draw.rect(self.screen, BORDER, rect, self.S(3))
-            draw_arrow(self.screen, d, rect, inset=self.S(6))
+            draw_arrow(self.screen, d, rect, is_head=True)
 
         scoreboard_label = self.font_small.render("SCOREBOARD (TAB)", True, ACCENT)
         settings_label = self.font_small.render("SETTINGS", True, ACCENT)
@@ -837,6 +937,7 @@ class Game:
 
             self.draw_hud()
             self.draw_board(offset)
+            self.draw_firing_animations(offset)
             self.draw_particles_and_texts()
 
             if self.state == State.LEVEL_CLEAR:

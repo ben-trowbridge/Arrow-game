@@ -77,11 +77,19 @@ def draw_pixel_matrix(surface, matrix, top_left, pixel_size, color):
                 surface.fill(color, rect)
 
 
-def draw_arrow(surface, direction, cell_rect, inset=6, color=None):
+def draw_arrow(surface, direction, cell_rect, is_head=False, color=None):
+    # The head is drawn one whole pixel_size step bigger than a body
+    # segment -- computed as an offset from the body's own size rather
+    # than as two independently-floored (size - inset) // 7 values, so
+    # the two can never round down to the same integer and silently lose
+    # their size difference on smaller boards (they used to, once a cell
+    # got small enough that both insets' leftover space floored to the
+    # same pixel_size).
     matrix = ARROW_PATTERNS[direction]
     color = color or ARROW_COLORS[direction]
-    size = min(cell_rect.width, cell_rect.height) - inset * 2
-    pixel_size = max(1, size // 7)
+    cell_size = min(cell_rect.width, cell_rect.height)
+    body_pixel_size = max(1, cell_size // 10)
+    pixel_size = body_pixel_size + 1 if is_head else body_pixel_size
     matrix_px = pixel_size * 7
     top_left = (
         cell_rect.x + (cell_rect.width - matrix_px) // 2,
