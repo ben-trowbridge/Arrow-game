@@ -5,7 +5,9 @@ off screen. If it slams into another arrow, you lose one of your three
 lives. Clear every arrow to advance to a bigger, tougher board.
 """
 
+import json
 import math
+import os
 import random
 import sys
 from enum import Enum, auto
@@ -54,12 +56,36 @@ MESSAGE_SEEDS = {
     "SAMGARMN": ["YOU ARE", "MISSED."],
 }
 
+SCOREBOARD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scoreboard.json")
+SCOREBOARD_SIZE = 10
+
+
+def load_scoreboard():
+    try:
+        with open(SCOREBOARD_PATH, "r") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except (OSError, ValueError):
+        pass
+    return []
+
+
+def save_scoreboard(entries):
+    try:
+        with open(SCOREBOARD_PATH, "w") as f:
+            json.dump(entries, f, indent=2)
+    except OSError:
+        pass
+
 
 class State(Enum):
     TITLE = auto()
     PLAYING = auto()
+    PAUSED = auto()
     LEVEL_CLEAR = auto()
     GAME_OVER = auto()
+    SCOREBOARD = auto()
 
 
 class Game:
@@ -85,8 +111,14 @@ class Game:
         self.board = Board(BASE_GRID_SIZE)
         self.elapsed = 0.0
         self.hits_this_board = 0
+        self.total_time = 0.0
         self.seed = None
         self.seed_input = ""
+
+        self.pause_selection = 0
+        self.pause_buttons = []
+        self.scoreboard_button = None
+        self.scoreboard = load_scoreboard()
 
     def S(self, px):
         """Scale a fixed pixel value (font size, layout offset, border
@@ -142,6 +174,7 @@ class Game:
         self.lives = START_LIVES
         self.elapsed = 0.0
         self.hits_this_board = 0
+        self.total_time = 0.0
         if seed in MESSAGE_SEEDS:
             self.board = build_message_board(MESSAGE_SEEDS[seed])
         else:
@@ -161,6 +194,39 @@ class Game:
         self.hits_this_board = 0
         self.board_dirty = True
         self.state = State.PLAYING
+
+    def _end_game(self):
+        self.state = State.GAME_OVER
+        self.sound.play_gameover()
+        self._save_score()
+
+    def _save_score(self):
+        entries = load_scoreboard()
+        entries.append(
+            {
+                "seed": self.seed,
+                "score": self.score,
+                "level": self.level,
+                "time": round(self.total_time, 1),
+            }
+        )
+        entries.sort(key=lambda e: e.get("score", 0), reverse=True)
+        entries = entries[:SCOREBOARD_SIZE]
+        save_scoreboard(entries)
+        self.scoreboard = entries
+
+    def _select_pause_option(self, index):
+        if index == 0:
+            self.state = State.PLAYING
+        else:
+            self.state = State.TITLE
+            self.seed_input = ""
+
+    def _handle_pause_click(self, pos):
+        for i, rect in enumerate(self.pause_buttons):
+            if rect.collidepoint(pos):
+                self._select_pause_option(i)
+                return
 
     # -- input --------------------------------------------------------
 
@@ -189,7 +255,16 @@ class Game:
 
     def handle_click(self, pos):
         if self.state == State.TITLE:
+            if self.scoreboard_button and self.scoreboard_button.collidepoint(pos):
+                self.state = State.SCOREBOARD
+                return
             self.start_new_game(self.seed_input or None)
+            return
+        if self.state == State.SCOREBOARD:
+            self.state = State.TITLE
+            return
+        if self.state == State.PAUSED:
+            self._handle_pause_click(pos)
             return
         if self.state == State.GAME_OVER:
             self.start_new_game()
@@ -254,8 +329,7 @@ class Game:
             spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10, scale=self.ui_scale)
             self.sound.play_hit()
             if self.lives <= 0 or (not infinite_time and self.elapsed >= GAME_TIME_LIMIT):
-                self.state = State.GAME_OVER
-                self.sound.play_gameover()
+                self._end_game()
 
     def handle_event(self, event):
         if event.type == pygame.QUIT:
@@ -265,8 +339,17 @@ class Game:
             self.handle_click(event.pos)
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
-                pygame.quit()
-                sys.exit(0)
+                if self.state == State.PLAYING:
+                    self.state = State.PAUSED
+                    self.pause_selection = 0
+                elif self.state == State.PAUSED:
+                    self.state = State.PLAYING
+                elif self.state == State.SCOREBOARD:
+                    self.state = State.TITLE
+                else:
+                    pygame.quit()
+                    sys.exit(0)
+                return
             if self.state == State.TITLE:
                 if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                     self.start_new_game(self.seed_input or None)
@@ -276,27 +359,39 @@ class Game:
                     self.adjust_scale(-UI_SCALE_STEP)
                 elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
                     self.adjust_scale(UI_SCALE_STEP)
+                elif event.key == pygame.K_TAB:
+                    self.state = State.SCOREBOARD
                 else:
                     ch = event.unicode.upper()
                     if ch and ch in SEED_CHARS and len(self.seed_input) < 8:
                         self.seed_input += ch
+            elif self.state == State.PAUSED:
+                if event.key in (pygame.K_UP, pygame.K_w):
+                    self.pause_selection = (self.pause_selection - 1) % 2
+                elif event.key in (pygame.K_DOWN, pygame.K_s):
+                    self.pause_selection = (self.pause_selection + 1) % 2
+                elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    self._select_pause_option(self.pause_selection)
             elif self.state == State.GAME_OVER and event.key == pygame.K_r:
                 self.start_new_game()
 
     # -- update ---------------------------------------------------------
 
     def update(self, dt):
+        if self.state == State.PAUSED:
+            return
         self.particles = [p for p in self.particles if p.update(dt)]
         self.texts = [t for t in self.texts if t.update(dt)]
         if self.angel is not None and not self.angel.update(dt):
             self.angel = None
         if self.shake_timer > 0:
             self.shake_timer = max(0.0, self.shake_timer - dt)
-        if self.state == State.PLAYING and not getattr(self.board, "infinite_time", False):
-            self.elapsed += dt
-            if self.elapsed >= GAME_TIME_LIMIT:
-                self.state = State.GAME_OVER
-                self.sound.play_gameover()
+        if self.state == State.PLAYING:
+            self.total_time += dt
+            if not getattr(self.board, "infinite_time", False):
+                self.elapsed += dt
+                if self.elapsed >= GAME_TIME_LIMIT:
+                    self._end_game()
         if self.state == State.LEVEL_CLEAR:
             self.level_clear_timer -= dt
             if self.level_clear_timer <= 0:
@@ -430,6 +525,7 @@ class Game:
             "Clear path off its final leg? It blasts off screen. BOOM!",
             "Hits another arrow? You lose a life and add time to the clock.",
             "Each board gives you 5 minutes -- clear it before time's up.",
+            "Press ESC anytime during play to pause.",
             "",
             f"SEED (0-9, A-Z): {self.seed_input.ljust(8, '_')}",
             f"WINDOW SIZE: {round(self.ui_scale * 100)}%  (- / = to adjust)",
@@ -445,10 +541,71 @@ class Game:
         demo_dirs = list(ARROW_COLORS.keys())
         box = self.S(64)
         for i, d in enumerate(demo_dirs):
-            rect = pygame.Rect(self.window_width // 2 - self.S(150) + i * self.S(80), self.S(600), box, box)
+            rect = pygame.Rect(self.window_width // 2 - self.S(150) + i * self.S(80), self.S(660), box, box)
             pygame.draw.rect(self.screen, GRID_BG, rect)
             pygame.draw.rect(self.screen, BORDER, rect, self.S(3))
             draw_arrow(self.screen, d, rect, inset=self.S(6))
+
+        scoreboard_label = self.font_small.render("VIEW SCOREBOARD (TAB)", True, ACCENT)
+        label_rect = scoreboard_label.get_rect(center=(self.window_width // 2, self.S(770)))
+        self.screen.blit(scoreboard_label, label_rect)
+        self.scoreboard_button = label_rect.inflate(self.S(30), self.S(16))
+
+    def draw_scoreboard_screen(self):
+        self.screen.fill(BG)
+        title = self.font_big.render("SCOREBOARD", True, ACCENT)
+        self.screen.blit(title, title.get_rect(center=(self.window_width // 2, self.S(140))))
+
+        if not self.scoreboard:
+            empty = self.font_small.render("NO SCORES YET -- GO PLAY!", True, TEXT_DIM)
+            self.screen.blit(empty, empty.get_rect(center=(self.window_width // 2, self.S(320))))
+        else:
+            header = self.font_small.render("RANK   SCORE    LEVEL   TIME    SEED", True, TEXT_DIM)
+            self.screen.blit(header, header.get_rect(center=(self.window_width // 2, self.S(220))))
+            y = self.S(260)
+            for i, entry in enumerate(self.scoreboard):
+                mins, secs = divmod(int(entry.get("time", 0)), 60)
+                line = (
+                    f"{i + 1:>2}.   {entry.get('score', 0):06d}    LV{entry.get('level', 1):<3}  "
+                    f"{mins}:{secs:02d}   {entry.get('seed') or '--------'}"
+                )
+                color = ACCENT if i == 0 else WHITE
+                text = self.font_small.render(line, True, color)
+                self.screen.blit(text, text.get_rect(center=(self.window_width // 2, y)))
+                y += self.S(34)
+
+        hint = self.font_small.render("CLICK OR PRESS ESC TO GO BACK", True, ACCENT)
+        self.screen.blit(hint, hint.get_rect(center=(self.window_width // 2, self.window_height - self.S(60))))
+
+    def draw_pause_overlay(self):
+        # A cheap, retro-appropriate "blur": squash the already-rendered
+        # frame way down then stretch it back up, which smears out detail
+        # without needing an actual blur filter.
+        small_size = (max(1, self.window_width // 10), max(1, self.window_height // 10))
+        small = pygame.transform.smoothscale(self.screen, small_size)
+        blurred = pygame.transform.smoothscale(small, (self.window_width, self.window_height))
+        self.screen.blit(blurred, (0, 0))
+
+        overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        overlay.fill((10, 10, 20, 170))
+        self.screen.blit(overlay, (0, 0))
+
+        panel = pygame.Rect(0, 0, self.S(360), self.S(220))
+        panel.center = (self.window_width // 2, self.window_height // 2)
+        self.screen.fill(PANEL_BG, panel)
+        pygame.draw.rect(self.screen, BORDER, panel, self.S(4))
+
+        title = self.font_med.render("PAUSED", True, ACCENT)
+        self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.top + self.S(44))))
+
+        self.pause_buttons = []
+        labels = ["CONTINUE", "MAIN MENU"]
+        for i, label in enumerate(labels):
+            color = ACCENT if i == self.pause_selection else WHITE
+            text = self.font_small.render(label, True, color)
+            rect = text.get_rect(center=(panel.centerx, panel.top + self.S(120) + i * self.S(48)))
+            self.screen.blit(text, rect)
+            self.pause_buttons.append(rect.inflate(self.S(60), self.S(20)))
 
     def draw_game_over_screen(self):
         self.screen.fill(BG)
@@ -485,6 +642,8 @@ class Game:
     def draw(self):
         if self.state == State.TITLE:
             self.draw_title_screen()
+        elif self.state == State.SCOREBOARD:
+            self.draw_scoreboard_screen()
         else:
             self.screen.fill(BG)
             offset = (0, 0)
@@ -500,6 +659,8 @@ class Game:
                 self.draw_level_clear_overlay()
             elif self.state == State.GAME_OVER:
                 self.draw_game_over_screen()
+            elif self.state == State.PAUSED:
+                self.draw_pause_overlay()
 
         self.draw_scanlines()
         pygame.display.flip()

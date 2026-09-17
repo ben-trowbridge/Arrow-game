@@ -52,10 +52,30 @@ board size, and effects all scale together, and the actual OS window
 resizes live. Handy for a bigger monitor or, at 100%, a more compact
 window.
 
+### Pausing
+
+Press `Esc` anytime during play to pause. The board freezes and blurs
+out behind a menu offering **Continue** (or `Esc` again) and **Main
+Menu**, which abandons the current run and returns to the title screen
+without recording a score. Navigate with the mouse or `Up`/`Down` +
+`Enter`.
+
+### Scoreboard
+
+Press `Tab` from the title screen (or click "VIEW SCOREBOARD") to see
+the top 10 runs, ranked by score, each listing the level reached, total
+time played, and the seed that produced it — handy for finding a seed
+worth replaying or beating. A run's score is recorded the moment it
+ends in Game Over; it's saved locally to `scoreboard.json` next to the
+game (ignored by git, so it's per-install).
+
 **Controls:** left-click any cell of an arrow to fire it. `Space` or
 `Enter` to start from the title screen (using the typed seed if any).
-`-` / `=` to adjust window size from the title screen. `R` to play
-again from the game-over screen. `Esc` to quit.
+`-` / `=` to adjust window size from the title screen. `Tab` from the
+title screen for the scoreboard. `Esc` to pause during play (again, or
+click Continue, to resume); `Esc` also quits from the title screen or
+backs out of the scoreboard. `R` to play again from the game-over
+screen.
 
 ## Running it
 
@@ -77,7 +97,7 @@ The executable will show up under `dist/`.
 
 ## Project layout
 
-- `main.py` — game loop, states (title / playing / level clear / game over), rendering, input
+- `main.py` — game loop, states (title / playing / paused / level clear / game over / scoreboard), rendering, input
 - `board.py` — grid + puzzle generator (bent multi-cell arrow "snakes", guaranteed solvable)
 - `message.py` — tiny pixel font + builder for fixed, message-spelling boards tied to specific seeds
 - `sprites.py` — pixel-art arrow/heart bitmaps, explosion particles, floating text
