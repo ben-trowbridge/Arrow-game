@@ -45,7 +45,7 @@ def text_to_cells(lines, gap=1, line_gap=1):
     return cells, max_width, total_height
 
 
-def _run_piece(x, run_ys):
+def _vertical_piece(x, run_ys):
     """One vertical stroke: `run_ys` are the contiguous rows (ascending)
     of a single column's run. Piece.cells runs tail-first to the head,
     so bottom-to-top here (head = topmost cell, continuing UP off it)."""
@@ -53,36 +53,58 @@ def _run_piece(x, run_ys):
     return Piece(cells, Dir.UP)
 
 
-def build_message_board(lines):
-    """A Board whose arrows spell out `lines` (each an uppercase string)
-    instead of a random puzzle. Each letter's own vertical strokes come
-    out as single multi-cell arrows -- e.g. "Y" is two 2-cell strokes and
-    one 3-cell stroke, matching its shape -- rather than a scatter of
-    independent 1-cell arrows, by grouping each column's "on" cells into
-    maximal contiguous runs and giving each run one piece.
+def _horizontal_piece(y, run_xs):
+    """One horizontal stroke: `run_xs` are the contiguous columns
+    (ascending) of a single row's run. Tail-first to the head means
+    left-to-right, so the head (last cell, continuing UP off it) is the
+    rightmost cell of the run."""
+    cells = [(x, y) for x in run_xs]
+    return Piece(cells, Dir.UP)
 
-    All of them point UP. A run's own cells never block its exit (a run
-    is maximal, so the cell right above its top is never part of it),
-    but two *different* runs in the same column can still be close
-    enough for one's exit lane to reach into the other -- so this isn't
-    order-independent, just simple: clear top to bottom, column by
-    column (independent columns can be done in any order relative to
-    each other), and every run's lane is guaranteed already clear by
-    the time you get to it.
+
+def _decompose_runs(allowed_cells):
+    """Break the message's "on" cells into pieces. Horizontal runs of 2+
+    cells are claimed first -- a flat stroke like the top of an "I" or
+    the crossbar of an "A" reads as one clean bent piece exiting UP from
+    its right end, rather than as isolated dots -- and each remaining
+    cell is grouped into a vertical run by column, exiting UP from its
+    topmost cell, exactly as before.
+
+    Every piece here exits UP, and every piece's own body cells all sit
+    at or below its own head's row: trivially true for a horizontal run
+    (the whole body shares the head's row) and true by construction for
+    a vertical run (the head is its topmost cell). That means sorting
+    ALL pieces by head row ascending and firing in that order is always
+    valid, regardless of whether a piece's body is a horizontal bar or a
+    vertical stroke: anything sitting above a piece's head belongs to
+    some other piece whose own head row is strictly smaller, so it always
+    fires first. Clear top to bottom.
     """
-    cells, width, height = text_to_cells(lines)
-    size = max(width, height)
-    ox = (size - width) // 2
-    oy = (size - height) // 2
-    allowed_cells = {(x + ox, y + oy) for x, y in cells}
+    by_row = {}
+    for x, y in allowed_cells:
+        by_row.setdefault(y, []).append(x)
 
-    board = Board(size, allowed_cells=allowed_cells, skip_generate=True)
+    claimed = set()
+    pieces = []
+    for y, xs in by_row.items():
+        xs.sort()
+        run = [xs[0]]
+        for x in xs[1:]:
+            if x == run[-1] + 1:
+                run.append(x)
+            else:
+                if len(run) >= 2:
+                    pieces.append(_horizontal_piece(y, run))
+                    claimed.update((rx, y) for rx in run)
+                run = [x]
+        if len(run) >= 2:
+            pieces.append(_horizontal_piece(y, run))
+            claimed.update((rx, y) for rx in run)
 
     by_column = {}
-    for x, y in allowed_cells:
+    for x, y in allowed_cells - claimed:
         by_column.setdefault(x, []).append(y)
 
-    pieces = []
     for x, ys in by_column.items():
         ys.sort()
         run = [ys[0]]
@@ -90,10 +112,25 @@ def build_message_board(lines):
             if y == run[-1] + 1:
                 run.append(y)
             else:
-                pieces.append(_run_piece(x, run))
+                pieces.append(_vertical_piece(x, run))
                 run = [y]
-        pieces.append(_run_piece(x, run))
+        pieces.append(_vertical_piece(x, run))
 
+    return pieces
+
+
+def build_message_board(lines):
+    """A Board whose arrows spell out `lines` (each an uppercase string)
+    instead of a random puzzle -- see _decompose_runs() for how the
+    letters' cells become pieces."""
+    cells, width, height = text_to_cells(lines)
+    size = max(width, height)
+    ox = (size - width) // 2
+    oy = (size - height) // 2
+    allowed_cells = {(x + ox, y + oy) for x, y in cells}
+
+    board = Board(size, allowed_cells=allowed_cells, skip_generate=True)
+    pieces = _decompose_runs(allowed_cells)
     for piece in pieces:
         for c in piece.cells:
             board.cell_owner[c] = piece
