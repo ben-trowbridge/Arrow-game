@@ -168,4 +168,9 @@ def build_message_board(lines):
         for c in piece.cells:
             board.cell_owner[c] = piece
     board.pieces = pieces
+    # Presentation flags main.py checks for -- there's no time pressure
+    # on a tribute board, and clearing it plays a longer, gentler
+    # celebration (an angel rising) instead of the usual quick overlay.
+    board.infinite_time = True
+    board.tribute = True
     return board

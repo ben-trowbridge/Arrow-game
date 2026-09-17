@@ -43,7 +43,7 @@ from constants import (
     UI_SCALE_STEP,
     WHITE,
 )
-from sprites import ARROW_COLORS, FloatingText, draw_arrow, draw_heart, spawn_burst
+from sprites import ARROW_COLORS, Angel, FloatingText, draw_arrow, draw_heart, spawn_burst
 
 CELEBRATIONS = ["YEAH!", "BOOM!", "RADICAL!", "NICE!", "WHOA!", "BLASTED!", "ZOOM!"]
 SEED_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -71,6 +71,7 @@ class Game:
 
         self.particles = []
         self.texts = []
+        self.angel = None
         self.shake_timer = 0.0
         self.level_clear_timer = 0.0
 
@@ -123,6 +124,8 @@ class Game:
         return min(MAX_SNAKE_LEN, BASE_SNAKE_LEN + (level - 1) // 2)
 
     def time_for_board(self):
+        if getattr(self.board, "infinite_time", False):
+            return float("inf")
         return LEVEL_TIME_BASE + LEVEL_TIME_PER_PIECE * len(self.board.pieces)
 
     def start_new_game(self, seed=None):
@@ -144,6 +147,7 @@ class Game:
             self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.particles.clear()
         self.texts.clear()
+        self.angel = None
         self.time_left = self.time_for_board()
         self.board_dirty = True
         self.state = State.PLAYING
@@ -151,6 +155,7 @@ class Game:
     def advance_level(self):
         self.level += 1
         self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
+        self.angel = None
         self.time_left = self.time_for_board()
         self.board_dirty = True
         self.state = State.PLAYING
@@ -216,14 +221,26 @@ class Game:
             if self.board.is_cleared():
                 self.sound.play_levelup()
                 self.state = State.LEVEL_CLEAR
-                self.level_clear_timer = 1.6
+                if getattr(self.board, "tribute", False):
+                    self.level_clear_timer = 4.0
+                    self.angel = Angel(
+                        x=self.window_width // 2,
+                        start_y=self.window_height + self.S(40),
+                        end_y=-self.S(40),
+                        duration=self.level_clear_timer,
+                        pixel_size=self.S(9),
+                    )
+                else:
+                    self.level_clear_timer = 1.6
         elif result == "hit":
             self.lives -= 1
-            self.time_left = max(0.0, self.time_left - HIT_TIME_PENALTY)
+            infinite_time = getattr(self.board, "infinite_time", False)
+            if not infinite_time:
+                self.time_left = max(0.0, self.time_left - HIT_TIME_PENALTY)
             self.shake_timer = 0.25
             spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10, scale=self.ui_scale)
             self.sound.play_hit()
-            if self.lives <= 0 or self.time_left <= 0:
+            if self.lives <= 0 or (not infinite_time and self.time_left <= 0):
                 self.state = State.GAME_OVER
                 self.sound.play_gameover()
 
@@ -258,9 +275,11 @@ class Game:
     def update(self, dt):
         self.particles = [p for p in self.particles if p.update(dt)]
         self.texts = [t for t in self.texts if t.update(dt)]
+        if self.angel is not None and not self.angel.update(dt):
+            self.angel = None
         if self.shake_timer > 0:
             self.shake_timer = max(0.0, self.shake_timer - dt)
-        if self.state == State.PLAYING:
+        if self.state == State.PLAYING and not getattr(self.board, "infinite_time", False):
             self.time_left = max(0.0, self.time_left - dt)
             if self.time_left <= 0:
                 self.state = State.GAME_OVER
@@ -289,8 +308,11 @@ class Game:
         remaining = self.font_small.render(f"ARROWS LEFT: {self.board.remaining()}", True, TEXT_DIM)
         self.screen.blit(remaining, (self.S(24), self.S(108)))
 
-        timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
-        timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
+        if getattr(self.board, "infinite_time", False):
+            timer_text = self.font_small.render("TIME: UNLIMITED", True, WHITE)
+        else:
+            timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
+            timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
         self.screen.blit(timer_text, (self.S(24), self.S(134)))
 
         seed_text = self.font_small.render(f"SEED: {self.seed}", True, TEXT_DIM)
@@ -418,6 +440,8 @@ class Game:
         overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
         overlay.fill((10, 10, 20, 180))
         self.screen.blit(overlay, (0, 0))
+        if self.angel is not None:
+            self.angel.draw(self.screen)
         text = self.font_big.render(f"LEVEL {self.level} CLEAR!", True, ACCENT)
         self.screen.blit(text, text.get_rect(center=(self.window_width // 2, self.window_height // 2)))
 
