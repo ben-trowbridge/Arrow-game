@@ -197,6 +197,31 @@ class Board:
 
         self.pieces = best_pieces
         self.cell_owner = {c: p for p in best_pieces for c in p.cells}
+        self._prune_pointless_singles()
+
+    def _prune_pointless_singles(self):
+        """A lone 1-cell arrow only reads as intentional if it's actually
+        part of the puzzle -- either something else has to be cleared
+        before it can fire, or it's sitting in another piece's own exit
+        lane. One that's already fireable AND blocks nothing is just
+        leftover filler from a walk that failed to extend anywhere;
+        pull it and leave the cell empty instead of cluttering the board
+        with single cells that serve no purpose. Since this only removes
+        pieces that nothing depends on, it can't affect any other
+        piece's own validity."""
+        other_lanes = [(other, set(self._lane_cells(other.head, other.direction))) for other in self.pieces]
+        for piece in list(self.pieces):
+            if len(piece.cells) != 1:
+                continue
+            cell = piece.cells[0]
+            is_blocked = any(c in self.cell_owner for c in self._lane_cells(cell, piece.direction))
+            if is_blocked:
+                continue
+            blocks_someone = any(other is not piece and cell in lane for other, lane in other_lanes)
+            if blocks_someone:
+                continue
+            del self.cell_owner[cell]
+            self.pieces.remove(piece)
 
     # -- queries / actions ----------------------------------------------
 
