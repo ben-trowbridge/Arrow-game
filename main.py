@@ -5,6 +5,7 @@ off screen. If it slams into another arrow, you lose one of your three
 lives. Clear every arrow to advance to a bigger, tougher board.
 """
 
+import math
 import random
 import sys
 from enum import Enum, auto
@@ -26,16 +27,18 @@ from constants import (
     DESIGN_WINDOW_HEIGHT,
     DESIGN_WINDOW_WIDTH,
     FPS,
+    GAME_TIME_LIMIT,
+    GAME_TIME_PULSE_START,
+    GAME_TIME_WARNING,
     GRID_BG,
     GRID_LINE,
     HEART_EMPTY,
     HEART_FULL,
-    HIT_TIME_PENALTY,
-    LEVEL_TIME_BASE,
-    LEVEL_TIME_PER_PIECE,
     MAX_GRID_SIZE,
+    MAX_HIT_PENALTY,
     MAX_SNAKE_LEN,
     MAX_UI_SCALE,
+    MIN_HIT_PENALTY,
     MIN_UI_SCALE,
     PANEL_BG,
     START_LIVES,
@@ -80,7 +83,8 @@ class Game:
         self.score = 0
         self.lives = START_LIVES
         self.board = Board(BASE_GRID_SIZE)
-        self.time_left = LEVEL_TIME_BASE
+        self.elapsed = 0.0
+        self.hits_this_board = 0
         self.seed = None
         self.seed_input = ""
 
@@ -123,11 +127,6 @@ class Game:
     def snake_len_for_level(self, level):
         return min(MAX_SNAKE_LEN, BASE_SNAKE_LEN + (level - 1) // 2)
 
-    def time_for_board(self):
-        if getattr(self.board, "infinite_time", False):
-            return float("inf")
-        return LEVEL_TIME_BASE + LEVEL_TIME_PER_PIECE * len(self.board.pieces)
-
     def start_new_game(self, seed=None):
         # The same seed always produces the same board, level after
         # level, because everything in board.py draws from this same
@@ -141,6 +140,8 @@ class Game:
         self.level = 1
         self.score = 0
         self.lives = START_LIVES
+        self.elapsed = 0.0
+        self.hits_this_board = 0
         if seed in MESSAGE_SEEDS:
             self.board = build_message_board(MESSAGE_SEEDS[seed])
         else:
@@ -148,7 +149,6 @@ class Game:
         self.particles.clear()
         self.texts.clear()
         self.angel = None
-        self.time_left = self.time_for_board()
         self.board_dirty = True
         self.state = State.PLAYING
 
@@ -156,7 +156,9 @@ class Game:
         self.level += 1
         self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.angel = None
-        self.time_left = self.time_for_board()
+        self.lives = START_LIVES
+        self.elapsed = 0.0
+        self.hits_this_board = 0
         self.board_dirty = True
         self.state = State.PLAYING
 
@@ -236,11 +238,22 @@ class Game:
             self.lives -= 1
             infinite_time = getattr(self.board, "infinite_time", False)
             if not infinite_time:
-                self.time_left = max(0.0, self.time_left - HIT_TIME_PENALTY)
+                self.hits_this_board += 1
+                # Escalates from MIN on the first heart lost this board to
+                # MAX on the last one, added to the elapsed clock -- an
+                # early mistake barely dents your 5 minutes, a late one
+                # bites hard.
+                if START_LIVES > 1:
+                    penalty = MIN_HIT_PENALTY + (MAX_HIT_PENALTY - MIN_HIT_PENALTY) * (
+                        self.hits_this_board - 1
+                    ) / (START_LIVES - 1)
+                else:
+                    penalty = MAX_HIT_PENALTY
+                self.elapsed += penalty
             self.shake_timer = 0.25
             spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10, scale=self.ui_scale)
             self.sound.play_hit()
-            if self.lives <= 0 or (not infinite_time and self.time_left <= 0):
+            if self.lives <= 0 or (not infinite_time and self.elapsed >= GAME_TIME_LIMIT):
                 self.state = State.GAME_OVER
                 self.sound.play_gameover()
 
@@ -280,8 +293,8 @@ class Game:
         if self.shake_timer > 0:
             self.shake_timer = max(0.0, self.shake_timer - dt)
         if self.state == State.PLAYING and not getattr(self.board, "infinite_time", False):
-            self.time_left = max(0.0, self.time_left - dt)
-            if self.time_left <= 0:
+            self.elapsed += dt
+            if self.elapsed >= GAME_TIME_LIMIT:
                 self.state = State.GAME_OVER
                 self.sound.play_gameover()
         if self.state == State.LEVEL_CLEAR:
@@ -308,12 +321,30 @@ class Game:
         remaining = self.font_small.render(f"ARROWS LEFT: {self.board.remaining()}", True, TEXT_DIM)
         self.screen.blit(remaining, (self.S(24), self.S(108)))
 
+        timer_pos = (self.S(24), self.S(134))
         if getattr(self.board, "infinite_time", False):
             timer_text = self.font_small.render("TIME: UNLIMITED", True, WHITE)
+            self.screen.blit(timer_text, timer_pos)
         else:
-            timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
-            timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
-        self.screen.blit(timer_text, (self.S(24), self.S(134)))
+            mins, secs = divmod(int(self.elapsed), 60)
+            timer_color = (232, 80, 80) if self.elapsed >= GAME_TIME_WARNING else WHITE
+            timer_text = self.font_small.render(f"TIME: {mins}:{secs:02d}", True, timer_color)
+
+            scale = 1.0
+            if self.elapsed >= GAME_TIME_PULSE_START:
+                # Pulses once per second, growing more pronounced as the
+                # 5:00 cutoff approaches -- amplitude ramps from a light
+                # thump right at 4:50 to a hard pulse right at the end.
+                progress = min(1.0, (self.elapsed - GAME_TIME_PULSE_START) / (GAME_TIME_LIMIT - GAME_TIME_PULSE_START))
+                amplitude = 0.15 + 0.45 * progress
+                phase = self.elapsed % 1.0
+                scale = 1.0 + amplitude * math.sin(phase * math.pi)
+
+            if scale != 1.0:
+                w, h = timer_text.get_size()
+                timer_text = pygame.transform.scale(timer_text, (max(1, round(w * scale)), max(1, round(h * scale))))
+            rect = timer_text.get_rect(midleft=(timer_pos[0], timer_pos[1] + self.font_small.get_height() // 2))
+            self.screen.blit(timer_text, rect)
 
         seed_text = self.font_small.render(f"SEED: {self.seed}", True, TEXT_DIM)
         self.screen.blit(seed_text, (self.S(24), self.S(160)))
@@ -397,8 +428,8 @@ class Game:
         lines = [
             "Click any cell of a twisty arrow to fire the whole thing.",
             "Clear path off its final leg? It blasts off screen. BOOM!",
-            "Hits another arrow? You lose a life and 2 seconds.",
-            "The clock scales with how many arrows are on the board.",
+            "Hits another arrow? You lose a life and add time to the clock.",
+            "Each board gives you 5 minutes -- clear it before time's up.",
             "",
             f"SEED (0-9, A-Z): {self.seed_input.ljust(8, '_')}",
             f"WINDOW SIZE: {round(self.ui_scale * 100)}%  (- / = to adjust)",

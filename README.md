@@ -16,14 +16,16 @@ belonging to one to fire the whole thing:
   pixel explosion and a ridiculous 8-bit "yeah, man!" jingle. Score goes
   up (more for longer arrows).
 - **Path blocked by another arrow?** Collision — you lose one of your
-  three lives and 2 seconds off the clock, with a screen shake and a
-  buzzer sound.
+  three lives and time gets added to the clock, with a screen shake and
+  a buzzer sound. The penalty escalates with each heart you lose on the
+  current board: 2 seconds for the first, up to 10 seconds for the last.
 
-The clock starts at 10 seconds plus 1 second per arrow on the board, so
-bigger, denser levels get proportionally more time. Clear every arrow
-before it runs out to advance to the next, bigger and twistier level
-(which resets the clock for the new board). Run out of lives or run out
-of time and it's game over.
+Each board gives you a fresh 5-minute clock, counting up from 0:00, and a
+full three hearts — both reset at the start of every board. The timer
+turns red at 4:30 and starts pulsing once a second at 4:50, growing more
+pronounced as it closes in on 5:00. Clear every arrow before the clock
+runs out to advance to the next, bigger and twistier level. Run out of
+lives or run out of time and it's game over.
 
 Every generated board is guaranteed solvable — there's always at least
 one order you can clear it in — but a careless click order can still
