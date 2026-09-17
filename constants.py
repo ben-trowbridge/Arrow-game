@@ -1,12 +1,12 @@
 """Static config: window layout, sizing, and the retro color palette."""
 
 WINDOW_WIDTH = 900
-WINDOW_HEIGHT = 1030
+WINDOW_HEIGHT = 1056
 FPS = 60
 
 BOARD_AREA = 800
 BOARD_LEFT = (WINDOW_WIDTH - BOARD_AREA) // 2
-BOARD_TOP = 190
+BOARD_TOP = 216
 
 BASE_GRID_SIZE = 22
 MAX_GRID_SIZE = 26

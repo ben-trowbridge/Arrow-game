@@ -29,9 +29,18 @@ Every generated board is guaranteed solvable — there's always at least
 one order you can clear it in — but a careless click order can still
 corner you, which is exactly what costs you lives.
 
-**Controls:** left-click any cell of an arrow to fire it. `Space` to
-start from the title screen. `R` to play again from the game-over
-screen. `Esc` to quit.
+### Seeds
+
+From the title screen you can type an 8-character seed (`0`-`9`, `A`-`F`)
+before starting — the same seed always regenerates the exact same run,
+level for level, so you can share a seed or replay one you liked. Leave
+it blank and a random seed is generated for you; either way, the active
+seed is shown in the HUD during play and on the game-over screen so you
+can note it down.
+
+**Controls:** left-click any cell of an arrow to fire it. `Space` or
+`Enter` to start from the title screen (using the typed seed if any).
+`R` to play again from the game-over screen. `Esc` to quit.
 
 ## Running it
 

@@ -42,6 +42,7 @@ from constants import (
 from sprites import ARROW_COLORS, FloatingText, draw_arrow, draw_heart, spawn_burst
 
 CELEBRATIONS = ["YEAH!", "BOOM!", "RADICAL!", "NICE!", "WHOA!", "BLASTED!", "ZOOM!"]
+SEED_CHARS = "0123456789ABCDEF"
 
 
 class State(Enum):
@@ -77,6 +78,8 @@ class Game:
         self.time_left = LEVEL_TIME_BASE
         self.board_surface = pygame.Surface((BOARD_AREA, BOARD_AREA))
         self.board_dirty = True
+        self.seed = None
+        self.seed_input = ""
 
     # -- level / game flow ------------------------------------------------
 
@@ -89,7 +92,16 @@ class Game:
     def time_for_board(self):
         return LEVEL_TIME_BASE + LEVEL_TIME_PER_PIECE * len(self.board.pieces)
 
-    def start_new_game(self):
+    def start_new_game(self, seed=None):
+        # The same seed always produces the same board, level after
+        # level, because everything in board.py draws from this same
+        # global `random` stream -- seeding it once here is enough to
+        # make the whole run reproducible.
+        seed = seed or "".join(random.choices(SEED_CHARS, k=8))
+        random.seed(seed)
+        self.seed = seed
+        self.seed_input = ""
+
         self.level = 1
         self.score = 0
         self.lives = START_LIVES
@@ -131,7 +143,7 @@ class Game:
 
     def handle_click(self, pos):
         if self.state == State.TITLE:
-            self.start_new_game()
+            self.start_new_game(self.seed_input or None)
             return
         if self.state == State.GAME_OVER:
             self.start_new_game()
@@ -186,9 +198,16 @@ class Game:
             if event.key == pygame.K_ESCAPE:
                 pygame.quit()
                 sys.exit(0)
-            if event.key == pygame.K_SPACE and self.state == State.TITLE:
-                self.start_new_game()
-            if event.key == pygame.K_r and self.state == State.GAME_OVER:
+            if self.state == State.TITLE:
+                if event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    self.start_new_game(self.seed_input or None)
+                elif event.key == pygame.K_BACKSPACE:
+                    self.seed_input = self.seed_input[:-1]
+                else:
+                    ch = event.unicode.upper()
+                    if ch and ch in SEED_CHARS and len(self.seed_input) < 8:
+                        self.seed_input += ch
+            elif self.state == State.GAME_OVER and event.key == pygame.K_r:
                 self.start_new_game()
 
     # -- update ---------------------------------------------------------
@@ -230,6 +249,9 @@ class Game:
         timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
         timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
         self.screen.blit(timer_text, (24, 134))
+
+        seed_text = self.font_small.render(f"SEED: {self.seed}", True, TEXT_DIM)
+        self.screen.blit(seed_text, (24, 160))
 
         heart_px = 6
         heart_gap = heart_px * 9
@@ -304,13 +326,14 @@ class Game:
             "Click any cell of a twisty arrow to fire the whole thing.",
             "Clear path off its final leg? It blasts off screen. BOOM!",
             "Hits another arrow? You lose a life and 2 seconds.",
-            "Each level gives you 20 seconds. Clear it to level up.",
+            "The clock scales with how many arrows are on the board.",
             "",
-            "CLICK OR PRESS SPACE TO START",
+            f"SEED (0-9, A-F): {self.seed_input.ljust(8, '_')}",
+            "CLICK, SPACE, OR ENTER TO START",
         ]
         y = 340
         for line in lines:
-            color = WHITE if "CLICK" not in line else ACCENT
+            color = ACCENT if ("CLICK" in line or "SEED" in line) else WHITE
             text = self.font_small.render(line, True, color)
             self.screen.blit(text, text.get_rect(center=(WINDOW_WIDTH // 2, y)))
             y += 34
@@ -332,6 +355,9 @@ class Game:
 
         level_text = self.font_small.render(f"REACHED LEVEL {self.level}", True, TEXT_DIM)
         self.screen.blit(level_text, level_text.get_rect(center=(WINDOW_WIDTH // 2, 380)))
+
+        seed_text = self.font_small.render(f"SEED WAS: {self.seed}", True, TEXT_DIM)
+        self.screen.blit(seed_text, seed_text.get_rect(center=(WINDOW_WIDTH // 2, 410)))
 
         hint = self.font_small.render("CLICK OR PRESS R TO PLAY AGAIN", True, ACCENT)
         self.screen.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, 460)))
