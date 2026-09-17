@@ -31,12 +31,16 @@ corner you, which is exactly what costs you lives.
 
 ### Seeds
 
-From the title screen you can type an 8-character seed (`0`-`9`, `A`-`F`)
+From the title screen you can type an 8-character seed (`0`-`9`, `A`-`Z`)
 before starting — the same seed always regenerates the exact same run,
 level for level, so you can share a seed or replay one you liked. Leave
 it blank and a random seed is generated for you; either way, the active
 seed is shown in the HUD during play and on the game-over screen so you
 can note it down.
+
+A small number of seeds are hand-built tribute boards instead of a
+random puzzle — see `message.py` and the `MESSAGE_SEEDS` map in
+`main.py`.
 
 ### Window size
 
@@ -73,6 +77,7 @@ The executable will show up under `dist/`.
 
 - `main.py` — game loop, states (title / playing / level clear / game over), rendering, input
 - `board.py` — grid + puzzle generator (bent multi-cell arrow "snakes", guaranteed solvable)
+- `message.py` — tiny pixel font + builder for fixed, message-spelling boards tied to specific seeds
 - `sprites.py` — pixel-art arrow/heart bitmaps, explosion particles, floating text
 - `audio.py` — procedurally synthesized 8-bit sound effects (numpy square waves)
 - `constants.py` — window sizing and the retro color palette

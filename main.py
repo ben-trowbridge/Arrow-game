@@ -13,6 +13,7 @@ import pygame
 
 from audio import SoundEngine
 from board import Board
+from message import build_message_board
 from constants import (
     ACCENT,
     BASE_GRID_SIZE,
@@ -45,7 +46,10 @@ from constants import (
 from sprites import ARROW_COLORS, FloatingText, draw_arrow, draw_heart, spawn_burst
 
 CELEBRATIONS = ["YEAH!", "BOOM!", "RADICAL!", "NICE!", "WHOA!", "BLASTED!", "ZOOM!"]
-SEED_CHARS = "0123456789ABCDEF"
+SEED_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+MESSAGE_SEEDS = {
+    "SAMGARMN": ["YOU ARE", "MISSED."],
+}
 
 
 class State(Enum):
@@ -126,7 +130,7 @@ class Game:
         # level, because everything in board.py draws from this same
         # global `random` stream -- seeding it once here is enough to
         # make the whole run reproducible.
-        seed = seed or "".join(random.choices(SEED_CHARS, k=8))
+        seed = (seed or "".join(random.choices(SEED_CHARS, k=8))).upper()
         random.seed(seed)
         self.seed = seed
         self.seed_input = ""
@@ -134,7 +138,10 @@ class Game:
         self.level = 1
         self.score = 0
         self.lives = START_LIVES
-        self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
+        if seed in MESSAGE_SEEDS:
+            self.board = build_message_board(MESSAGE_SEEDS[seed])
+        else:
+            self.board = Board(self.grid_size_for_level(self.level), self.snake_len_for_level(self.level))
         self.particles.clear()
         self.texts.clear()
         self.time_left = self.time_for_board()
@@ -371,7 +378,7 @@ class Game:
             "Hits another arrow? You lose a life and 2 seconds.",
             "The clock scales with how many arrows are on the board.",
             "",
-            f"SEED (0-9, A-F): {self.seed_input.ljust(8, '_')}",
+            f"SEED (0-9, A-Z): {self.seed_input.ljust(8, '_')}",
             f"WINDOW SIZE: {round(self.ui_scale * 100)}%  (- / = to adjust)",
             "CLICK, SPACE, OR ENTER TO START",
         ]

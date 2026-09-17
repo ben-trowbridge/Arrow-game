@@ -69,13 +69,36 @@ EXIT_WINDOW = 4
 
 
 class Board:
-    def __init__(self, size, max_piece_len=3):
+    def __init__(
+        self,
+        size,
+        max_piece_len=3,
+        allowed_cells=None,
+        min_fill_ratio=None,
+        attempts=20,
+        exit_window=None,
+        prune=True,
+        skip_generate=False,
+    ):
         self.size = size
         self.max_piece_len = max_piece_len
-        self.exit_window = min(size - 1, EXIT_WINDOW)
+        self.exit_window = min(size - 1, EXIT_WINDOW if exit_window is None else exit_window)
+        # Restricting placement to a specific cell set (rather than every
+        # cell in the size x size square) is what lets a Board spell out a
+        # fixed shape -- everything outside that set is simply never
+        # attempted, so it stays permanently empty padding.
+        self.allowed_cells = set(allowed_cells) if allowed_cells is not None else None
+        self.min_fill_ratio = MIN_FILL_RATIO if min_fill_ratio is None else min_fill_ratio
+        # Pruning drops any 1-cell arrow that doesn't block or get blocked
+        # by anything -- exactly right for keeping a puzzle meaningful,
+        # but wrong for a fixed shape: a sparse letter like "I" has pixels
+        # that trivially don't interact with each other, and we want
+        # every one of them drawn regardless.
+        self.prune = prune
         self.pieces = []
         self.cell_owner = {}  # (x, y) -> Piece
-        self._generate()
+        if not skip_generate:
+            self._generate(max_attempts=attempts)
 
     # -- generation ---------------------------------------------------
 
@@ -174,7 +197,10 @@ class Board:
 
     def _generate(self, max_attempts=20):
         n = self.size
-        all_cells = [(x, y) for y in range(n) for x in range(n)]
+        if self.allowed_cells is not None:
+            all_cells = list(self.allowed_cells)
+        else:
+            all_cells = [(x, y) for y in range(n) for x in range(n)]
 
         best_pieces = None
         best_fill = -1
@@ -197,16 +223,18 @@ class Board:
             if len(occupied) > best_fill:
                 best_fill = len(occupied)
                 best_pieces = pieces
-            if best_fill >= MIN_FILL_RATIO * n * n:
+            if best_fill >= self.min_fill_ratio * len(all_cells):
                 break
 
         self.pieces = best_pieces
         self.cell_owner = {c: p for p in best_pieces for c in p.cells}
-        self._prune_pointless_singles()
+        if self.prune:
+            self._prune_pointless_singles()
         for _ in range(3):
             if not self._fill_remaining_gaps():
                 break
-            self._prune_pointless_singles()
+            if self.prune:
+                self._prune_pointless_singles()
 
     def _fill_remaining_gaps(self):
         """A second generation pass over whatever's still empty. New
@@ -223,7 +251,10 @@ class Board:
         whether anything was added."""
         n = self.size
         occupied = set(self.cell_owner)
-        empty = [(x, y) for y in range(n) for x in range(n) if (x, y) not in occupied]
+        if self.allowed_cells is not None:
+            empty = [c for c in self.allowed_cells if c not in occupied]
+        else:
+            empty = [(x, y) for y in range(n) for x in range(n) if (x, y) not in occupied]
         random.shuffle(empty)
         added = False
         for start in empty:
