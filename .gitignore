@@ -4,3 +4,4 @@ build/
 dist/
 *.spec
 scoreboard.json
+settings.json

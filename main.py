@@ -58,6 +58,7 @@ MESSAGE_SEEDS = {
 
 SCOREBOARD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scoreboard.json")
 SCOREBOARD_SIZE = 10
+SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 
 def load_scoreboard():
@@ -79,6 +80,25 @@ def save_scoreboard(entries):
         pass
 
 
+def load_settings():
+    try:
+        with open(SETTINGS_PATH, "r") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def save_settings(settings):
+    try:
+        with open(SETTINGS_PATH, "w") as f:
+            json.dump(settings, f, indent=2)
+    except OSError:
+        pass
+
+
 class State(Enum):
     TITLE = auto()
     PLAYING = auto()
@@ -86,6 +106,7 @@ class State(Enum):
     LEVEL_CLEAR = auto()
     GAME_OVER = auto()
     SCOREBOARD = auto()
+    SETTINGS = auto()
 
 
 class Game:
@@ -97,6 +118,14 @@ class Game:
         self.clock = pygame.time.Clock()
 
         self.sound = SoundEngine()
+        settings = load_settings()
+        self.sound.apply_settings(
+            settings.get("sfx_enabled", True),
+            settings.get("sfx_volume", 0.8),
+            settings.get("music_enabled", True),
+            settings.get("music_volume", 0.5),
+            settings.get("music_track", 0),
+        )
 
         self.particles = []
         self.texts = []
@@ -118,7 +147,12 @@ class Game:
         self.pause_selection = 0
         self.pause_buttons = []
         self.scoreboard_button = None
+        self.settings_button = None
         self.scoreboard = load_scoreboard()
+
+        self.settings_selection = 0
+        self.settings_rows = []
+        self.settings_return_state = State.TITLE
 
     def S(self, px):
         """Scale a fixed pixel value (font size, layout offset, border
@@ -218,6 +252,10 @@ class Game:
     def _select_pause_option(self, index):
         if index == 0:
             self.state = State.PLAYING
+        elif index == 1:
+            self.settings_return_state = State.PAUSED
+            self.settings_selection = 0
+            self.state = State.SETTINGS
         else:
             self.state = State.TITLE
             self.seed_input = ""
@@ -227,6 +265,58 @@ class Game:
             if rect.collidepoint(pos):
                 self._select_pause_option(i)
                 return
+
+    def _save_settings(self):
+        save_settings(
+            {
+                "sfx_enabled": self.sound.sfx_enabled,
+                "sfx_volume": round(self.sound.sfx_volume, 2),
+                "music_enabled": self.sound.music_enabled,
+                "music_volume": round(self.sound.music_volume, 2),
+                "music_track": self.sound.current_track,
+            }
+        )
+
+    def _adjust_settings(self, row, direction):
+        if row == 0:
+            self.sound.set_sfx_enabled(not self.sound.sfx_enabled)
+        elif row == 1:
+            self.sound.set_sfx_volume(self.sound.sfx_volume + 0.1 * direction)
+        elif row == 2:
+            self.sound.set_music_enabled(not self.sound.music_enabled)
+        elif row == 3:
+            self.sound.set_music_volume(self.sound.music_volume + 0.1 * direction)
+        elif row == 4:
+            new_index = (self.sound.current_track + direction) % len(self.sound.tracks)
+            self.sound.play_music(new_index)
+        self._save_settings()
+
+    def _activate_settings(self, row):
+        if row in (0, 2):
+            self._adjust_settings(row, 1)
+        elif row == 5:
+            self.state = self.settings_return_state
+
+    def _handle_settings_click(self, pos):
+        for i, rect in enumerate(self.settings_rows):
+            if not rect.collidepoint(pos):
+                continue
+            self.settings_selection = i
+            if i in (0, 2):
+                self._adjust_settings(i, 1)
+            elif i in (1, 3):
+                proportion = max(0.0, min(1.0, (pos[0] - rect.left) / rect.width))
+                if i == 1:
+                    self.sound.set_sfx_volume(proportion)
+                else:
+                    self.sound.set_music_volume(proportion)
+                self._save_settings()
+            elif i == 4:
+                direction = -1 if pos[0] < rect.centerx else 1
+                self._adjust_settings(4, direction)
+            elif i == 5:
+                self.state = self.settings_return_state
+            return
 
     # -- input --------------------------------------------------------
 
@@ -258,10 +348,18 @@ class Game:
             if self.scoreboard_button and self.scoreboard_button.collidepoint(pos):
                 self.state = State.SCOREBOARD
                 return
+            if self.settings_button and self.settings_button.collidepoint(pos):
+                self.settings_return_state = State.TITLE
+                self.settings_selection = 0
+                self.state = State.SETTINGS
+                return
             self.start_new_game(self.seed_input or None)
             return
         if self.state == State.SCOREBOARD:
             self.state = State.TITLE
+            return
+        if self.state == State.SETTINGS:
+            self._handle_settings_click(pos)
             return
         if self.state == State.PAUSED:
             self._handle_pause_click(pos)
@@ -346,6 +444,8 @@ class Game:
                     self.state = State.PLAYING
                 elif self.state == State.SCOREBOARD:
                     self.state = State.TITLE
+                elif self.state == State.SETTINGS:
+                    self.state = self.settings_return_state
                 else:
                     pygame.quit()
                     sys.exit(0)
@@ -367,11 +467,22 @@ class Game:
                         self.seed_input += ch
             elif self.state == State.PAUSED:
                 if event.key in (pygame.K_UP, pygame.K_w):
-                    self.pause_selection = (self.pause_selection - 1) % 2
+                    self.pause_selection = (self.pause_selection - 1) % 3
                 elif event.key in (pygame.K_DOWN, pygame.K_s):
-                    self.pause_selection = (self.pause_selection + 1) % 2
+                    self.pause_selection = (self.pause_selection + 1) % 3
                 elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
                     self._select_pause_option(self.pause_selection)
+            elif self.state == State.SETTINGS:
+                if event.key in (pygame.K_UP, pygame.K_w):
+                    self.settings_selection = (self.settings_selection - 1) % 6
+                elif event.key in (pygame.K_DOWN, pygame.K_s):
+                    self.settings_selection = (self.settings_selection + 1) % 6
+                elif event.key in (pygame.K_LEFT, pygame.K_a):
+                    self._adjust_settings(self.settings_selection, -1)
+                elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                    self._adjust_settings(self.settings_selection, 1)
+                elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    self._activate_settings(self.settings_selection)
             elif self.state == State.GAME_OVER and event.key == pygame.K_r:
                 self.start_new_game()
 
@@ -546,10 +657,17 @@ class Game:
             pygame.draw.rect(self.screen, BORDER, rect, self.S(3))
             draw_arrow(self.screen, d, rect, inset=self.S(6))
 
-        scoreboard_label = self.font_small.render("VIEW SCOREBOARD (TAB)", True, ACCENT)
-        label_rect = scoreboard_label.get_rect(center=(self.window_width // 2, self.S(770)))
-        self.screen.blit(scoreboard_label, label_rect)
-        self.scoreboard_button = label_rect.inflate(self.S(30), self.S(16))
+        scoreboard_label = self.font_small.render("SCOREBOARD (TAB)", True, ACCENT)
+        settings_label = self.font_small.render("SETTINGS", True, ACCENT)
+        gap = self.S(50)
+        total_w = scoreboard_label.get_width() + gap + settings_label.get_width()
+        row_y = self.S(770)
+        sb_rect = scoreboard_label.get_rect(midleft=(self.window_width // 2 - total_w // 2, row_y))
+        st_rect = settings_label.get_rect(midleft=(sb_rect.right + gap, row_y))
+        self.screen.blit(scoreboard_label, sb_rect)
+        self.screen.blit(settings_label, st_rect)
+        self.scoreboard_button = sb_rect.inflate(self.S(20), self.S(14))
+        self.settings_button = st_rect.inflate(self.S(20), self.S(14))
 
     def draw_scoreboard_screen(self):
         self.screen.fill(BG)
@@ -577,6 +695,70 @@ class Game:
         hint = self.font_small.render("CLICK OR PRESS ESC TO GO BACK", True, ACCENT)
         self.screen.blit(hint, hint.get_rect(center=(self.window_width // 2, self.window_height - self.S(60))))
 
+    def _draw_volume_bar(self, rect, value, selected):
+        pygame.draw.rect(self.screen, GRID_BG, rect)
+        border_color = ACCENT if selected else BORDER
+        pygame.draw.rect(self.screen, border_color, rect, self.S(3))
+        fill_w = max(0, int((rect.width - self.S(6)) * value))
+        fill_rect = pygame.Rect(rect.x + self.S(3), rect.y + self.S(3), fill_w, rect.height - self.S(6))
+        fill_color = ACCENT if selected else (150, 140, 220)
+        self.screen.fill(fill_color, fill_rect)
+        pct = self.font_small.render(f"{round(value * 100)}%", True, WHITE)
+        self.screen.blit(pct, pct.get_rect(center=rect.center))
+
+    def draw_settings_screen(self):
+        self.screen.fill(BG)
+        title = self.font_big.render("SETTINGS", True, ACCENT)
+        self.screen.blit(title, title.get_rect(center=(self.window_width // 2, self.S(110))))
+
+        row_h = self.S(56)
+        label_x = self.window_width // 2 - self.S(200)
+        bar_x = self.window_width // 2 - self.S(10)
+        bar_w = self.S(210)
+        bar_h = self.S(34)
+        y = self.S(220)
+
+        self.settings_rows = []
+        for i in range(6):
+            row_rect = pygame.Rect(0, y, self.window_width, row_h)
+            selected = i == self.settings_selection
+            color = ACCENT if selected else WHITE
+
+            if i == 0:
+                text = self.font_small.render(f"SFX:  {'ON' if self.sound.sfx_enabled else 'OFF'}", True, color)
+                self.screen.blit(text, text.get_rect(midleft=(label_x, row_rect.centery)))
+                self.settings_rows.append(row_rect)
+            elif i == 1:
+                label = self.font_small.render("SFX VOLUME", True, color)
+                self.screen.blit(label, label.get_rect(midleft=(label_x, row_rect.centery)))
+                bar_rect = pygame.Rect(bar_x, row_rect.centery - bar_h // 2, bar_w, bar_h)
+                self._draw_volume_bar(bar_rect, self.sound.sfx_volume, selected)
+                self.settings_rows.append(bar_rect)
+            elif i == 2:
+                text = self.font_small.render(f"MUSIC:  {'ON' if self.sound.music_enabled else 'OFF'}", True, color)
+                self.screen.blit(text, text.get_rect(midleft=(label_x, row_rect.centery)))
+                self.settings_rows.append(row_rect)
+            elif i == 3:
+                label = self.font_small.render("MUSIC VOLUME", True, color)
+                self.screen.blit(label, label.get_rect(midleft=(label_x, row_rect.centery)))
+                bar_rect = pygame.Rect(bar_x, row_rect.centery - bar_h // 2, bar_w, bar_h)
+                self._draw_volume_bar(bar_rect, self.sound.music_volume, selected)
+                self.settings_rows.append(bar_rect)
+            elif i == 4:
+                name = self.sound.track_names[self.sound.current_track]
+                text = self.font_small.render(f"MUSIC TRACK:  <  {name}  >", True, color)
+                self.screen.blit(text, text.get_rect(center=(self.window_width // 2, row_rect.centery)))
+                self.settings_rows.append(row_rect)
+            elif i == 5:
+                text = self.font_small.render("BACK", True, color)
+                self.screen.blit(text, text.get_rect(center=(self.window_width // 2, row_rect.centery)))
+                self.settings_rows.append(row_rect)
+
+            y += row_h
+
+        hint = self.font_small.render("ARROWS OR CLICK TO ADJUST -- ESC TO GO BACK", True, TEXT_DIM)
+        self.screen.blit(hint, hint.get_rect(center=(self.window_width // 2, self.window_height - self.S(50))))
+
     def draw_pause_overlay(self):
         # A cheap, retro-appropriate "blur": squash the already-rendered
         # frame way down then stretch it back up, which smears out detail
@@ -590,7 +772,7 @@ class Game:
         overlay.fill((10, 10, 20, 170))
         self.screen.blit(overlay, (0, 0))
 
-        panel = pygame.Rect(0, 0, self.S(360), self.S(220))
+        panel = pygame.Rect(0, 0, self.S(360), self.S(270))
         panel.center = (self.window_width // 2, self.window_height // 2)
         self.screen.fill(PANEL_BG, panel)
         pygame.draw.rect(self.screen, BORDER, panel, self.S(4))
@@ -599,7 +781,7 @@ class Game:
         self.screen.blit(title, title.get_rect(center=(panel.centerx, panel.top + self.S(44))))
 
         self.pause_buttons = []
-        labels = ["CONTINUE", "MAIN MENU"]
+        labels = ["CONTINUE", "SETTINGS", "MAIN MENU"]
         for i, label in enumerate(labels):
             color = ACCENT if i == self.pause_selection else WHITE
             text = self.font_small.render(label, True, color)
@@ -644,6 +826,8 @@ class Game:
             self.draw_title_screen()
         elif self.state == State.SCOREBOARD:
             self.draw_scoreboard_screen()
+        elif self.state == State.SETTINGS:
+            self.draw_settings_screen()
         else:
             self.screen.fill(BG)
             offset = (0, 0)

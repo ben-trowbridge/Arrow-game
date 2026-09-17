@@ -1,5 +1,6 @@
-"""Procedural chiptune sound effects -- square/noise waves synthesized with
-numpy, so the game ships with zero audio asset files.
+"""Procedural chiptune audio -- sound effects and background music, all
+square/pulse/noise waves synthesized with numpy, so the game ships with
+zero audio asset files.
 """
 
 import numpy as np
@@ -40,14 +41,220 @@ def _to_sound(wave):
     return pygame.sndarray.make_sound(stereo)
 
 
+# -- background music: a tiny step-sequencer over a scale/chord skeleton --
+#
+# Each track is defined by a root note, a mode (semitone offsets), a
+# tempo, and a short chord progression (one scale-degree "root" per bar).
+# A bass and lead voice each walk a fixed arpeggio shape (scale-degree
+# offsets from whatever chord is current), which is what lets 8 tracks
+# with real harmonic movement exist as compact data instead of hand-typed
+# note-by-note melodies. Drums are a per-bar hit pattern of kick/hat/snare.
+
+MAJOR = [0, 2, 4, 5, 7, 9, 11]
+NATURAL_MINOR = [0, 2, 3, 5, 7, 8, 10]
+MIXOLYDIAN = [0, 2, 4, 5, 7, 9, 10]
+PHRYGIAN = [0, 1, 3, 5, 7, 8, 10]
+WHOLE_TONE = [0, 2, 4, 6, 8, 10]
+MAJOR_PENTATONIC = [0, 2, 4, 7, 9]
+
+
+def _pulse_tone(freq, duration, volume=0.2, duty=0.5):
+    """A duty-cycle pulse wave (the NES's bread-and-butter oscillator) with
+    a short raised fade in/out so concatenating hundreds of these into a
+    sequence doesn't click at every note boundary."""
+    n = int(SAMPLE_RATE * duration)
+    if freq is None or n <= 0:
+        return np.zeros(max(n, 0))
+    t = np.arange(n) / SAMPLE_RATE
+    phase = (freq * t) % 1.0
+    wave = np.where(phase < duty, 1.0, -1.0)
+    edge = max(1, int(n * 0.08))
+    env = np.ones(n)
+    env[:edge] = np.linspace(0.0, 1.0, edge)
+    env[-edge:] = np.minimum(env[-edge:], np.linspace(1.0, 0.0, edge))
+    return wave * env * volume
+
+
+def _kick(volume=0.55):
+    duration = 0.09
+    n = int(SAMPLE_RATE * duration)
+    freq = np.linspace(150, 45, n)
+    phase = 2 * np.pi * np.cumsum(freq) / SAMPLE_RATE
+    wave = np.sign(np.sin(phase))
+    env = np.linspace(1.0, 0.0, n) ** 0.3
+    return wave * env * volume
+
+
+def _hat(volume=0.16):
+    duration = 0.035
+    n = int(SAMPLE_RATE * duration)
+    wave = np.random.uniform(-1, 1, n)
+    env = np.linspace(1.0, 0.0, n) ** 0.5
+    return wave * env * volume
+
+
+def _snare(volume=0.28):
+    duration = 0.09
+    n = int(SAMPLE_RATE * duration)
+    t = np.arange(n) / SAMPLE_RATE
+    noise = np.random.uniform(-1, 1, n)
+    tone = np.sign(np.sin(2 * np.pi * 180 * t))
+    env = np.linspace(1.0, 0.0, n) ** 0.4
+    return (noise * 0.6 + tone * 0.4) * env * volume
+
+
+_DRUM_HITS = {"k": _kick, "h": _hat, "s": _snare}
+
+
+def _drum_step(symbol, step_dur):
+    n = int(SAMPLE_RATE * step_dur)
+    out = np.zeros(n)
+    if symbol in _DRUM_HITS:
+        hit = _DRUM_HITS[symbol]()
+        clip = min(len(hit), n)
+        out[:clip] = hit[:clip]
+    return out
+
+
+def _degree_freq(root_freq, scale, degree, octave_shift=0):
+    if degree is None:
+        return None
+    length = len(scale)
+    idx = degree % length
+    octave = degree // length + octave_shift
+    semitone = scale[idx] + 12 * octave
+    return root_freq * (2 ** (semitone / 12.0))
+
+
+def _build_track(spec):
+    steps_per_bar = spec.get("steps_per_bar", 8)
+    scale = spec["scale"]
+    root_freq = spec["root_freq"]
+    step_dur = 60.0 / spec["bpm"] / 2.0
+    bass_arp = spec.get("bass_arp", [0])
+    lead_arp = spec.get("lead_arp", [0, 2, 4, 2])
+    bass_duty = spec.get("bass_duty", 0.5)
+    lead_duty = spec.get("lead_duty", 0.25)
+    bass_vol = spec.get("bass_vol", 0.22)
+    lead_vol = spec.get("lead_vol", 0.16)
+    drums = spec.get("drums", [None] * steps_per_bar)
+
+    bass_chunks = []
+    lead_chunks = []
+    drum_chunks = []
+    for chord_root in spec["chords"]:
+        for s in range(steps_per_bar):
+            b_off = bass_arp[s % len(bass_arp)]
+            l_off = lead_arp[s % len(lead_arp)]
+            b_degree = None if b_off is None else chord_root + b_off
+            l_degree = None if l_off is None else chord_root + l_off
+            bass_chunks.append(
+                _pulse_tone(_degree_freq(root_freq, scale, b_degree, -1), step_dur, bass_vol, bass_duty)
+            )
+            lead_chunks.append(
+                _pulse_tone(_degree_freq(root_freq, scale, l_degree, 1), step_dur, lead_vol, lead_duty)
+            )
+            drum_chunks.append(_drum_step(drums[s % len(drums)], step_dur))
+
+    mix = np.concatenate(bass_chunks) + np.concatenate(lead_chunks) + np.concatenate(drum_chunks)
+    peak = np.max(np.abs(mix))
+    if peak > 0.9:
+        mix = mix / peak * 0.9
+    return mix
+
+
+MUSIC_TRACKS = [
+    {
+        "name": "DRIVING ACTION",
+        "root_freq": 196.00, "scale": MIXOLYDIAN, "bpm": 155,
+        "chords": [0, 0, 3, 4, 0, 0, 4, 4],
+        "bass_arp": [0, 0, 4, 0], "bass_duty": 0.5, "bass_vol": 0.24,
+        "lead_arp": [0, 2, 4, 7, 4, 2], "lead_duty": 0.25, "lead_vol": 0.17,
+        "drums": ["k", "h", "h", "h", "s", "h", "h", "h"],
+    },
+    {
+        "name": "MYSTERIOUS",
+        "root_freq": 174.61, "scale": WHOLE_TONE, "bpm": 85,
+        "chords": [0, 2, 0, 4],
+        "bass_arp": [0], "bass_duty": 0.5, "bass_vol": 0.16,
+        "lead_arp": [0, 4, 2, 6], "lead_duty": 0.125, "lead_vol": 0.13,
+        "drums": [None] * 8,
+    },
+    {
+        "name": "TRIUMPHANT",
+        "root_freq": 261.63, "scale": MAJOR, "bpm": 132,
+        "chords": [0, 3, 4, 0, 5, 3, 4, 0],
+        "bass_arp": [0, 4, 0, 4], "bass_duty": 0.5, "bass_vol": 0.24,
+        "lead_arp": [0, 2, 4, 7], "lead_duty": 0.5, "lead_vol": 0.2,
+        "drums": ["k", "h", "s", "h", "k", "h", "s", "h"],
+    },
+    {
+        "name": "TENSE BOSS",
+        "root_freq": 110.00, "scale": NATURAL_MINOR, "bpm": 165,
+        "chords": [0, 0, 1, 0, 6, 0, 4, 0],
+        "bass_arp": [0, 0, 0, 4], "bass_duty": 0.5, "bass_vol": 0.26,
+        "lead_arp": [0, 1, 0, 3], "lead_duty": 0.25, "lead_vol": 0.18,
+        "drums": ["k", "h", "k", "h", "k", "s", "k", "h"],
+    },
+    {
+        "name": "CHILL RETRO-POP",
+        "root_freq": 220.00, "scale": MAJOR_PENTATONIC, "bpm": 104,
+        "chords": [0, 4, 3, 2],
+        "bass_arp": [0, None, 2, None], "bass_duty": 0.5, "bass_vol": 0.18,
+        "lead_arp": [4, 2, 0, 2], "lead_duty": 0.5, "lead_vol": 0.15,
+        "drums": [None, "h", None, "h", None, "h", None, "h"],
+    },
+    {
+        "name": "DARK OMINOUS",
+        "root_freq": 82.41, "scale": PHRYGIAN, "bpm": 78,
+        "chords": [0, 1, 0, 6],
+        "bass_arp": [0], "bass_duty": 0.5, "bass_vol": 0.28,
+        "lead_arp": [0, None, None, 1, None, None, 0, None], "lead_duty": 0.125, "lead_vol": 0.14,
+        "drums": ["k", None, None, None, None, None, "k", None],
+    },
+    {
+        "name": "UPBEAT ARCADE",
+        "root_freq": 293.66, "scale": MAJOR, "bpm": 148,
+        "chords": [0, 4, 3, 0, 0, 4, 3, 0],
+        "bass_arp": [0, 4, 7, 4], "bass_duty": 0.5, "bass_vol": 0.22,
+        "lead_arp": [0, 2, 4, 2, 7, 4, 2, 0], "lead_duty": 0.25, "lead_vol": 0.18,
+        "drums": ["k", "h", "h", "h", "k", "h", "s", "h"],
+    },
+    {
+        "name": "EPIC MARCH",
+        "root_freq": 146.83, "scale": MAJOR, "bpm": 118,
+        "chords": [0, 3, 4, 0, 5, 4, 0, 0],
+        "bass_arp": [0, 0, 4, 0], "bass_duty": 0.5, "bass_vol": 0.26,
+        "lead_arp": [0, 2, 4, 7, 4, 2, 0, 4], "lead_duty": 0.5, "lead_vol": 0.2,
+        "drums": ["k", "h", "s", "h", "k", "h", "s", "h"],
+    },
+]
+
+
 class SoundEngine:
     def __init__(self):
         pygame.mixer.init(frequency=SAMPLE_RATE, size=-16, channels=2)
+        # Reserve channel 0 for music so pygame's automatic channel picker
+        # (used by the one-shot SFX below) can never steal it mid-loop.
+        pygame.mixer.set_num_channels(16)
+        pygame.mixer.set_reserved(1)
+        self.music_channel = pygame.mixer.Channel(0)
+
         self.click = _to_sound(_square_tone(180, 0.06, volume=0.2))
         self.clear = _to_sound(self._build_clear())
         self.hit = _to_sound(self._build_hit())
         self.gameover = _to_sound(self._build_gameover())
         self.levelup = _to_sound(self._build_levelup())
+        self._sfx_sounds = [self.click, self.clear, self.hit, self.gameover, self.levelup]
+
+        self.tracks = [_to_sound(_build_track(spec)) for spec in MUSIC_TRACKS]
+        self.track_names = [spec["name"] for spec in MUSIC_TRACKS]
+
+        self.sfx_enabled = True
+        self.sfx_volume = 0.8
+        self.music_enabled = True
+        self.music_volume = 0.5
+        self.current_track = 0
 
     @staticmethod
     def _build_clear():
@@ -89,3 +296,51 @@ class SoundEngine:
 
     def play_levelup(self):
         self.levelup.play()
+
+    # -- settings -------------------------------------------------------
+
+    def _apply_sfx_volume(self):
+        vol = self.sfx_volume if self.sfx_enabled else 0.0
+        for s in self._sfx_sounds:
+            s.set_volume(vol)
+
+    def set_sfx_enabled(self, enabled):
+        self.sfx_enabled = enabled
+        self._apply_sfx_volume()
+
+    def set_sfx_volume(self, volume):
+        self.sfx_volume = max(0.0, min(1.0, volume))
+        self._apply_sfx_volume()
+
+    def play_music(self, index):
+        self.current_track = index % len(self.tracks)
+        if not self.music_enabled:
+            return
+        self.music_channel.stop()
+        self.music_channel.play(self.tracks[self.current_track], loops=-1)
+        self.music_channel.set_volume(self.music_volume)
+
+    def set_music_enabled(self, enabled):
+        self.music_enabled = enabled
+        if enabled:
+            self.play_music(self.current_track)
+        else:
+            self.music_channel.stop()
+
+    def set_music_volume(self, volume):
+        self.music_volume = max(0.0, min(1.0, volume))
+        self.music_channel.set_volume(self.music_volume)
+
+    def apply_settings(self, sfx_enabled, sfx_volume, music_enabled, music_volume, music_track):
+        """Restore a previously-saved settings snapshot in one shot, at
+        startup -- avoids the intermediate music_channel.play() calls that
+        the individual setters above would otherwise trigger one at a time."""
+        self.sfx_enabled = sfx_enabled
+        self.sfx_volume = max(0.0, min(1.0, sfx_volume))
+        self._apply_sfx_volume()
+        self.music_enabled = music_enabled
+        self.music_volume = max(0.0, min(1.0, music_volume))
+        self.current_track = music_track % len(self.tracks)
+        if self.music_enabled:
+            self.music_channel.play(self.tracks[self.current_track], loops=-1)
+            self.music_channel.set_volume(self.music_volume)

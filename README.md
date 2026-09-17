@@ -2,8 +2,8 @@
 
 An 8-bit style desktop arrow-clearing puzzle, built with Python + Pygame.
 No image or audio asset files — every sprite is drawn as chunky pixel
-blocks and every sound effect is synthesized in code, so it's just Python
-and two libraries.
+blocks and every sound effect and music track is synthesized in code, so
+it's just Python and two libraries.
 
 ## How to play
 
@@ -55,27 +55,38 @@ window.
 ### Pausing
 
 Press `Esc` anytime during play to pause. The board freezes and blurs
-out behind a menu offering **Continue** (or `Esc` again) and **Main
-Menu**, which abandons the current run and returns to the title screen
-without recording a score. Navigate with the mouse or `Up`/`Down` +
-`Enter`.
+out behind a menu offering **Continue** (or `Esc` again), **Settings**,
+and **Main Menu**, which abandons the current run and returns to the
+title screen without recording a score. Navigate with the mouse or
+`Up`/`Down` + `Enter`.
 
 ### Scoreboard
 
-Press `Tab` from the title screen (or click "VIEW SCOREBOARD") to see
-the top 10 runs, ranked by score, each listing the level reached, total
+Press `Tab` from the title screen (or click "SCOREBOARD") to see the
+top 10 runs, ranked by score, each listing the level reached, total
 time played, and the seed that produced it — handy for finding a seed
 worth replaying or beating. A run's score is recorded the moment it
 ends in Game Over; it's saved locally to `scoreboard.json` next to the
 game (ignored by git, so it's per-install).
+
+### Music and sound settings
+
+Click "SETTINGS" from the title screen, or open it from the pause menu
+during play, to toggle SFX and music on/off, adjust their volumes with
+click-or-drag bars, and pick from 8 original chiptune background tracks
+(Driving Action, Mysterious, Triumphant, Tense Boss, Chill Retro-Pop,
+Dark Ominous, Upbeat Arcade, Epic March) — switching tracks previews it
+immediately. Every setting is saved locally to `settings.json` (also
+gitignored) and restored on the next launch. Navigate with `Up`/`Down`
+to pick a row and `Left`/`Right` to adjust it, or use the mouse.
 
 **Controls:** left-click any cell of an arrow to fire it. `Space` or
 `Enter` to start from the title screen (using the typed seed if any).
 `-` / `=` to adjust window size from the title screen. `Tab` from the
 title screen for the scoreboard. `Esc` to pause during play (again, or
 click Continue, to resume); `Esc` also quits from the title screen or
-backs out of the scoreboard. `R` to play again from the game-over
-screen.
+backs out of the scoreboard/settings screens. `R` to play again from
+the game-over screen.
 
 ## Running it
 
@@ -97,9 +108,9 @@ The executable will show up under `dist/`.
 
 ## Project layout
 
-- `main.py` — game loop, states (title / playing / paused / level clear / game over / scoreboard), rendering, input
+- `main.py` — game loop, states (title / playing / paused / level clear / game over / scoreboard / settings), rendering, input
 - `board.py` — grid + puzzle generator (bent multi-cell arrow "snakes", guaranteed solvable)
 - `message.py` — tiny pixel font + builder for fixed, message-spelling boards tied to specific seeds
 - `sprites.py` — pixel-art arrow/heart bitmaps, explosion particles, floating text
-- `audio.py` — procedurally synthesized 8-bit sound effects (numpy square waves)
+- `audio.py` — procedurally synthesized 8-bit sound effects and 8 background music tracks (numpy pulse/square waves, a tiny step-sequencer over scale/chord data)
 - `constants.py` — window sizing and the retro color palette
