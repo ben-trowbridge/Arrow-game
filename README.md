@@ -38,9 +38,18 @@ it blank and a random seed is generated for you; either way, the active
 seed is shown in the HUD during play and on the game-over screen so you
 can note it down.
 
+### Window size
+
+Also from the title screen, `-` / `=` shrinks or grows the whole window
+in 25% steps from 100% up to 200% (default 150%) — fonts, HUD layout,
+board size, and effects all scale together, and the actual OS window
+resizes live. Handy for a bigger monitor or, at 100%, a more compact
+window.
+
 **Controls:** left-click any cell of an arrow to fire it. `Space` or
 `Enter` to start from the title screen (using the typed seed if any).
-`R` to play again from the game-over screen. `Esc` to quit.
+`-` / `=` to adjust window size from the title screen. `R` to play
+again from the game-over screen. `Esc` to quit.
 
 ## Running it
 

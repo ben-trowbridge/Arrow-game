@@ -8,7 +8,7 @@ import random
 import pygame
 
 from board import Dir
-from constants import DOWN_COLOR, LEFT_COLOR, RIGHT_COLOR, UI_SCALE, UP_COLOR
+from constants import DOWN_COLOR, LEFT_COLOR, RIGHT_COLOR, UP_COLOR
 
 
 def _rotate_cw(matrix):
@@ -83,11 +83,11 @@ def draw_heart(surface, top_left, pixel_size, filled):
 
 
 class Particle:
-    __slots__ = ("x", "y", "vx", "vy", "color", "life", "age", "size")
+    __slots__ = ("x", "y", "vx", "vy", "color", "life", "age", "size", "gravity")
 
-    def __init__(self, x, y, color):
+    def __init__(self, x, y, color, scale=1.0):
         angle = random.uniform(0, 2 * math.pi)
-        speed = random.uniform(70, 260) * UI_SCALE
+        speed = random.uniform(70, 260) * scale
         self.x = x
         self.y = y
         self.vx = math.cos(angle) * speed
@@ -95,13 +95,14 @@ class Particle:
         self.color = color
         self.life = random.uniform(0.3, 0.65)
         self.age = 0.0
-        self.size = round(random.randint(3, 7) * UI_SCALE)
+        self.size = round(random.randint(3, 7) * scale)
+        self.gravity = 320 * scale
 
     def update(self, dt):
         self.age += dt
         self.x += self.vx * dt
         self.y += self.vy * dt
-        self.vy += 320 * UI_SCALE * dt
+        self.vy += self.gravity * dt
         return self.age < self.life
 
     def draw(self, surface):
@@ -111,13 +112,13 @@ class Particle:
         surface.fill(self.color, rect)
 
 
-def spawn_burst(particles, x, y, color, count=18):
+def spawn_burst(particles, x, y, color, count=18, scale=1.0):
     for _ in range(count):
-        particles.append(Particle(x, y, color))
+        particles.append(Particle(x, y, color, scale))
 
 
 class FloatingText:
-    def __init__(self, text, x, y, color, font):
+    def __init__(self, text, x, y, color, font, scale=1.0):
         self.text = text
         self.x = x
         self.y = y
@@ -125,10 +126,11 @@ class FloatingText:
         self.font = font
         self.age = 0.0
         self.life = 0.8
+        self.drift = 60 * scale
 
     def update(self, dt):
         self.age += dt
-        self.y -= 60 * UI_SCALE * dt
+        self.y -= self.drift * dt
         return self.age < self.life
 
     def draw(self, surface):

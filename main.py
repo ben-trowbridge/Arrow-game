@@ -18,10 +18,12 @@ from constants import (
     BASE_GRID_SIZE,
     BASE_SNAKE_LEN,
     BG,
-    BOARD_AREA,
-    BOARD_LEFT,
-    BOARD_TOP,
     BORDER,
+    DEFAULT_UI_SCALE,
+    DESIGN_BOARD_AREA,
+    DESIGN_BOARD_TOP,
+    DESIGN_WINDOW_HEIGHT,
+    DESIGN_WINDOW_WIDTH,
     FPS,
     GRID_BG,
     GRID_LINE,
@@ -32,25 +34,18 @@ from constants import (
     LEVEL_TIME_PER_PIECE,
     MAX_GRID_SIZE,
     MAX_SNAKE_LEN,
+    MAX_UI_SCALE,
+    MIN_UI_SCALE,
     PANEL_BG,
     START_LIVES,
     TEXT_DIM,
-    UI_SCALE,
+    UI_SCALE_STEP,
     WHITE,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
 )
 from sprites import ARROW_COLORS, FloatingText, draw_arrow, draw_heart, spawn_burst
 
 CELEBRATIONS = ["YEAH!", "BOOM!", "RADICAL!", "NICE!", "WHOA!", "BLASTED!", "ZOOM!"]
 SEED_CHARS = "0123456789ABCDEF"
-
-
-def S(px):
-    """Scale a fixed pixel value (font size, layout offset, border width,
-    ...) by the global UI_SCALE, so every hardcoded position in this file
-    grows or shrinks together with the window/board constants."""
-    return round(px * UI_SCALE)
 
 
 class State(Enum):
@@ -63,13 +58,10 @@ class State(Enum):
 class Game:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        self.ui_scale = DEFAULT_UI_SCALE
+        self._apply_scale()
         pygame.display.set_caption("ARROW BLAST")
         self.clock = pygame.time.Clock()
-
-        self.font_small = pygame.font.SysFont("couriernew", S(18), bold=True)
-        self.font_med = pygame.font.SysFont("couriernew", S(26), bold=True)
-        self.font_big = pygame.font.SysFont("couriernew", S(54), bold=True)
 
         self.sound = SoundEngine()
 
@@ -84,10 +76,39 @@ class Game:
         self.lives = START_LIVES
         self.board = Board(BASE_GRID_SIZE)
         self.time_left = LEVEL_TIME_BASE
-        self.board_surface = pygame.Surface((BOARD_AREA, BOARD_AREA))
-        self.board_dirty = True
         self.seed = None
         self.seed_input = ""
+
+    def S(self, px):
+        """Scale a fixed pixel value (font size, layout offset, border
+        width, ...) by the player's chosen window-size option, so every
+        hardcoded position in this file grows or shrinks together with
+        the window/board dimensions."""
+        return round(px * self.ui_scale)
+
+    def _apply_scale(self):
+        """(Re)compute every scale-dependent dimension and resize the
+        actual window/fonts/board surface to match -- called once at
+        startup and again whenever the player changes the window-size
+        option from the title screen."""
+        self.window_width = round(DESIGN_WINDOW_WIDTH * self.ui_scale)
+        self.window_height = round(DESIGN_WINDOW_HEIGHT * self.ui_scale)
+        self.board_area = round(DESIGN_BOARD_AREA * self.ui_scale)
+        self.board_top = round(DESIGN_BOARD_TOP * self.ui_scale)
+        self.board_left = (self.window_width - self.board_area) // 2
+
+        self.screen = pygame.display.set_mode((self.window_width, self.window_height))
+        self.font_small = pygame.font.SysFont("couriernew", self.S(18), bold=True)
+        self.font_med = pygame.font.SysFont("couriernew", self.S(26), bold=True)
+        self.font_big = pygame.font.SysFont("couriernew", self.S(54), bold=True)
+        self.board_surface = pygame.Surface((self.board_area, self.board_area))
+        self.board_dirty = True
+
+    def adjust_scale(self, delta):
+        new_scale = max(MIN_UI_SCALE, min(MAX_UI_SCALE, round(self.ui_scale + delta, 2)))
+        if new_scale != self.ui_scale:
+            self.ui_scale = new_scale
+            self._apply_scale()
 
     # -- level / game flow ------------------------------------------------
 
@@ -130,21 +151,24 @@ class Game:
     # -- input --------------------------------------------------------
 
     def cell_size(self):
-        return BOARD_AREA / self.board.size
+        return self.board_area / self.board.size
 
     def cell_at_pixel(self, mx, my):
         cell_px = self.cell_size()
-        if not (BOARD_LEFT <= mx < BOARD_LEFT + BOARD_AREA and BOARD_TOP <= my < BOARD_TOP + BOARD_AREA):
+        if not (
+            self.board_left <= mx < self.board_left + self.board_area
+            and self.board_top <= my < self.board_top + self.board_area
+        ):
             return None
-        gx = int((mx - BOARD_LEFT) // cell_px)
-        gy = int((my - BOARD_TOP) // cell_px)
+        gx = int((mx - self.board_left) // cell_px)
+        gy = int((my - self.board_top) // cell_px)
         return (gx, gy)
 
     def cell_rect(self, gx, gy):
         cell_px = self.cell_size()
         return pygame.Rect(
-            BOARD_LEFT + gx * cell_px,
-            BOARD_TOP + gy * cell_px,
+            self.board_left + gx * cell_px,
+            self.board_top + gy * cell_px,
             cell_px + 1,
             cell_px + 1,
         )
@@ -176,12 +200,12 @@ class Game:
             color = ARROW_COLORS[direction]
             for px, py in piece_cells:
                 prect = self.cell_rect(px, py)
-                spawn_burst(self.particles, prect.centerx, prect.centery, color, count=10)
+                spawn_burst(self.particles, prect.centerx, prect.centery, color, count=10, scale=self.ui_scale)
             self.sound.play_clear()
             self.score += 10 * self.level * len(piece_cells)
             self.board_dirty = True
             label = random.choice(CELEBRATIONS)
-            self.texts.append(FloatingText(label, cx, cy, ACCENT, self.font_small))
+            self.texts.append(FloatingText(label, cx, cy, ACCENT, self.font_small, scale=self.ui_scale))
             if self.board.is_cleared():
                 self.sound.play_levelup()
                 self.state = State.LEVEL_CLEAR
@@ -190,7 +214,7 @@ class Game:
             self.lives -= 1
             self.time_left = max(0.0, self.time_left - HIT_TIME_PENALTY)
             self.shake_timer = 0.25
-            spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10)
+            spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10, scale=self.ui_scale)
             self.sound.play_hit()
             if self.lives <= 0 or self.time_left <= 0:
                 self.state = State.GAME_OVER
@@ -211,6 +235,10 @@ class Game:
                     self.start_new_game(self.seed_input or None)
                 elif event.key == pygame.K_BACKSPACE:
                     self.seed_input = self.seed_input[:-1]
+                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    self.adjust_scale(-UI_SCALE_STEP)
+                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                    self.adjust_scale(UI_SCALE_STEP)
                 else:
                     ch = event.unicode.upper()
                     if ch and ch in SEED_CHARS and len(self.seed_input) < 8:
@@ -238,34 +266,34 @@ class Game:
     # -- draw -------------------------------------------------------------
 
     def draw_hud(self):
-        panel = pygame.Rect(0, 0, WINDOW_WIDTH, BOARD_TOP - S(20))
+        panel = pygame.Rect(0, 0, self.window_width, self.board_top - self.S(20))
         self.screen.fill(PANEL_BG, panel)
-        pygame.draw.rect(self.screen, BORDER, panel, S(4))
+        pygame.draw.rect(self.screen, BORDER, panel, self.S(4))
 
         title = self.font_med.render("ARROW BLAST", True, ACCENT)
-        self.screen.blit(title, (S(24), S(16)))
+        self.screen.blit(title, (self.S(24), self.S(16)))
 
         level_text = self.font_small.render(f"LEVEL {self.level}", True, WHITE)
-        self.screen.blit(level_text, (S(24), S(56)))
+        self.screen.blit(level_text, (self.S(24), self.S(56)))
 
         score_text = self.font_small.render(f"SCORE {self.score:06d}", True, WHITE)
-        self.screen.blit(score_text, (S(24), S(82)))
+        self.screen.blit(score_text, (self.S(24), self.S(82)))
 
         remaining = self.font_small.render(f"ARROWS LEFT: {self.board.remaining()}", True, TEXT_DIM)
-        self.screen.blit(remaining, (S(24), S(108)))
+        self.screen.blit(remaining, (self.S(24), self.S(108)))
 
         timer_color = (232, 80, 80) if self.time_left <= 5 else WHITE
         timer_text = self.font_small.render(f"TIME: {self.time_left:04.1f}", True, timer_color)
-        self.screen.blit(timer_text, (S(24), S(134)))
+        self.screen.blit(timer_text, (self.S(24), self.S(134)))
 
         seed_text = self.font_small.render(f"SEED: {self.seed}", True, TEXT_DIM)
-        self.screen.blit(seed_text, (S(24), S(160)))
+        self.screen.blit(seed_text, (self.S(24), self.S(160)))
 
-        heart_px = S(6)
+        heart_px = self.S(6)
         heart_gap = heart_px * 9
-        start_x = WINDOW_WIDTH - S(24) - heart_gap * START_LIVES
+        start_x = self.window_width - self.S(24) - heart_gap * START_LIVES
         for i in range(START_LIVES):
-            draw_heart(self.screen, (start_x + i * heart_gap, S(30)), heart_px, i < self.lives)
+            draw_heart(self.screen, (start_x + i * heart_gap, self.S(30)), heart_px, i < self.lives)
 
     def _cell_rect_local(self, gx, gy):
         cell_px = self.cell_size()
@@ -284,11 +312,11 @@ class Game:
         cell_px = self.cell_size()
         for i in range(n + 1):
             x = int(i * cell_px)
-            pygame.draw.line(surf, GRID_LINE, (x, 0), (x, BOARD_AREA))
+            pygame.draw.line(surf, GRID_LINE, (x, 0), (x, self.board_area))
             y = int(i * cell_px)
-            pygame.draw.line(surf, GRID_LINE, (0, y), (BOARD_AREA, y))
+            pygame.draw.line(surf, GRID_LINE, (0, y), (self.board_area, y))
 
-        track_px = max(S(6), int(cell_px * 0.3))
+        track_px = max(self.S(6), int(cell_px * 0.3))
         for piece in self.board.pieces:
             color = ARROW_COLORS[piece.direction]
 
@@ -306,7 +334,7 @@ class Game:
             last = len(piece.cells) - 1
             for i, (gx, gy) in enumerate(piece.cells):
                 rect = self._cell_rect_local(gx, gy)
-                inset = S(6) if i == last else S(11)
+                inset = self.S(6) if i == last else self.S(11)
                 draw_arrow(surf, piece.local_direction(i), rect, inset=inset, color=color)
 
     def draw_board(self, offset=(0, 0)):
@@ -315,9 +343,9 @@ class Game:
             self._render_board_surface()
             self.board_dirty = False
 
-        board_rect = pygame.Rect(BOARD_LEFT + ox, BOARD_TOP + oy, BOARD_AREA, BOARD_AREA)
-        self.screen.blit(self.board_surface, (BOARD_LEFT + ox, BOARD_TOP + oy))
-        pygame.draw.rect(self.screen, BORDER, board_rect, S(4))
+        board_rect = pygame.Rect(self.board_left + ox, self.board_top + oy, self.board_area, self.board_area)
+        self.screen.blit(self.board_surface, (self.board_left + ox, self.board_top + oy))
+        pygame.draw.rect(self.screen, BORDER, board_rect, self.S(4))
 
     def draw_particles_and_texts(self):
         for p in self.particles:
@@ -328,7 +356,7 @@ class Game:
     def draw_title_screen(self):
         self.screen.fill(BG)
         title = self.font_big.render("ARROW BLAST", True, ACCENT)
-        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, S(220))))
+        self.screen.blit(title, title.get_rect(center=(self.window_width // 2, self.S(220))))
 
         lines = [
             "Click any cell of a twisty arrow to fire the whole thing.",
@@ -337,51 +365,52 @@ class Game:
             "The clock scales with how many arrows are on the board.",
             "",
             f"SEED (0-9, A-F): {self.seed_input.ljust(8, '_')}",
+            f"WINDOW SIZE: {round(self.ui_scale * 100)}%  (- / = to adjust)",
             "CLICK, SPACE, OR ENTER TO START",
         ]
-        y = S(340)
+        y = self.S(340)
         for line in lines:
-            color = ACCENT if ("CLICK" in line or "SEED" in line) else WHITE
+            color = ACCENT if ("CLICK" in line or "SEED" in line or "WINDOW" in line) else WHITE
             text = self.font_small.render(line, True, color)
-            self.screen.blit(text, text.get_rect(center=(WINDOW_WIDTH // 2, y)))
-            y += S(34)
+            self.screen.blit(text, text.get_rect(center=(self.window_width // 2, y)))
+            y += self.S(34)
 
         demo_dirs = list(ARROW_COLORS.keys())
-        box = S(64)
+        box = self.S(64)
         for i, d in enumerate(demo_dirs):
-            rect = pygame.Rect(WINDOW_WIDTH // 2 - S(150) + i * S(80), S(600), box, box)
+            rect = pygame.Rect(self.window_width // 2 - self.S(150) + i * self.S(80), self.S(600), box, box)
             pygame.draw.rect(self.screen, GRID_BG, rect)
-            pygame.draw.rect(self.screen, BORDER, rect, S(3))
-            draw_arrow(self.screen, d, rect, inset=S(6))
+            pygame.draw.rect(self.screen, BORDER, rect, self.S(3))
+            draw_arrow(self.screen, d, rect, inset=self.S(6))
 
     def draw_game_over_screen(self):
         self.screen.fill(BG)
         title = self.font_big.render("GAME OVER", True, (232, 80, 80))
-        self.screen.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, S(260))))
+        self.screen.blit(title, title.get_rect(center=(self.window_width // 2, self.S(260))))
 
         score_text = self.font_med.render(f"FINAL SCORE: {self.score}", True, WHITE)
-        self.screen.blit(score_text, score_text.get_rect(center=(WINDOW_WIDTH // 2, S(340))))
+        self.screen.blit(score_text, score_text.get_rect(center=(self.window_width // 2, self.S(340))))
 
         level_text = self.font_small.render(f"REACHED LEVEL {self.level}", True, TEXT_DIM)
-        self.screen.blit(level_text, level_text.get_rect(center=(WINDOW_WIDTH // 2, S(380))))
+        self.screen.blit(level_text, level_text.get_rect(center=(self.window_width // 2, self.S(380))))
 
         seed_text = self.font_small.render(f"SEED WAS: {self.seed}", True, TEXT_DIM)
-        self.screen.blit(seed_text, seed_text.get_rect(center=(WINDOW_WIDTH // 2, S(410))))
+        self.screen.blit(seed_text, seed_text.get_rect(center=(self.window_width // 2, self.S(410))))
 
         hint = self.font_small.render("CLICK OR PRESS R TO PLAY AGAIN", True, ACCENT)
-        self.screen.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, S(460))))
+        self.screen.blit(hint, hint.get_rect(center=(self.window_width // 2, self.S(460))))
 
     def draw_level_clear_overlay(self):
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
         overlay.fill((10, 10, 20, 180))
         self.screen.blit(overlay, (0, 0))
         text = self.font_big.render(f"LEVEL {self.level} CLEAR!", True, ACCENT)
-        self.screen.blit(text, text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)))
+        self.screen.blit(text, text.get_rect(center=(self.window_width // 2, self.window_height // 2)))
 
     def draw_scanlines(self):
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        for y in range(0, WINDOW_HEIGHT, S(3)):
-            pygame.draw.line(overlay, (0, 0, 0, 28), (0, y), (WINDOW_WIDTH, y))
+        overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
+        for y in range(0, self.window_height, self.S(3)):
+            pygame.draw.line(overlay, (0, 0, 0, 28), (0, y), (self.window_width, y))
         self.screen.blit(overlay, (0, 0))
 
     def draw(self):
@@ -391,7 +420,7 @@ class Game:
             self.screen.fill(BG)
             offset = (0, 0)
             if self.shake_timer > 0:
-                mag = int(S(6) * (self.shake_timer / 0.25))
+                mag = int(self.S(6) * (self.shake_timer / 0.25))
                 offset = (random.randint(-mag, mag), random.randint(-mag, mag))
 
             self.draw_hud()
