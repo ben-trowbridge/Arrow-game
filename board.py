@@ -143,15 +143,20 @@ class Board:
 
             # Backtrack from the full walk to the longest prefix whose
             # straight exit lane is clear (of other pieces and of its own
-            # earlier body, in case the walk curled back on itself).
+            # earlier body, in case the walk curled back on itself). Any
+            # of the 4 directions is fair game at the truncation point,
+            # not just the one the walk happened to already be heading --
+            # bending once more right at the head lets a piece still fit
+            # into a narrow, winding leftover gap where continuing dead
+            # straight would immediately hit a wall.
             candidate = None
             for length in range(len(cells), 0, -1):
                 head = cells[length - 1]
-                if length == 1:
-                    dirs_to_try = DIRS[:]
-                    random.shuffle(dirs_to_try)
-                else:
-                    dirs_to_try = [path_dirs[length - 2]]
+                dirs_to_try = DIRS[:]
+                random.shuffle(dirs_to_try)
+                if length > 1 and path_dirs[length - 2] in dirs_to_try:
+                    dirs_to_try.remove(path_dirs[length - 2])
+                    dirs_to_try.insert(0, path_dirs[length - 2])
                 own_body = set(cells[:length])
                 for d in dirs_to_try:
                     lane = self._lane_cells(head, d)
@@ -198,6 +203,41 @@ class Board:
         self.pieces = best_pieces
         self.cell_owner = {c: p for p in best_pieces for c in p.cells}
         self._prune_pointless_singles()
+        for _ in range(3):
+            if not self._fill_remaining_gaps():
+                break
+            self._prune_pointless_singles()
+
+    def _fill_remaining_gaps(self):
+        """A second generation pass over whatever's still empty. New
+        pieces are validated against the board as it stands right now,
+        which is exactly the same rule the main pass used for every
+        piece placed after the first -- so this is really just placing
+        a few more pieces last in the same sequence, and reverse-order
+        solving still works (fire these newest ones first). Because a
+        gap sits between existing arrows, a new piece placed in it is
+        much likelier to come out genuinely blocked by a neighbor, and
+        since its body can land inside an EXISTING arrow's exit lane,
+        that older arrow can end up newly blocked by this one too --
+        real two-way interaction instead of isolated filler. Returns
+        whether anything was added."""
+        n = self.size
+        occupied = set(self.cell_owner)
+        empty = [(x, y) for y in range(n) for x in range(n) if (x, y) not in occupied]
+        random.shuffle(empty)
+        added = False
+        for start in empty:
+            if start in occupied:
+                continue
+            piece = self._grow_piece(start, occupied)
+            if piece is None:
+                continue
+            self.pieces.append(piece)
+            occupied.update(piece.cells)
+            for c in piece.cells:
+                self.cell_owner[c] = piece
+            added = True
+        return added
 
     def _prune_pointless_singles(self):
         """A lone 1-cell arrow only reads as intentional if it's actually
