@@ -15,7 +15,7 @@ from enum import Enum, auto
 import pygame
 
 from audio import SoundEngine
-from board import Board
+from board import DIR_FROM_DELTA, Board
 from message import build_message_board
 from constants import (
     ACCENT,
@@ -57,51 +57,96 @@ MESSAGE_SEEDS = {
 }
 
 FIRE_CELLS_PER_SECOND = 18.0
-HIT_RETURN_DURATION = 0.15
+
+
+def _path_point(path, t, exit_dir):
+    """Continuous position along `path` (a list of grid cells) at
+    fractional distance `t` cells from path[0] -- interpolating linearly
+    between consecutive path cells, and extrapolating straight in
+    `exit_dir` once `t` runs past the end of the recorded path (used once
+    a segment has moved beyond the piece's own lane cells)."""
+    last = len(path) - 1
+    if t <= 0:
+        return path[0]
+    if t >= last:
+        x1, y1 = path[last]
+        extra = t - last
+        return (x1 + exit_dir[0] * extra, y1 + exit_dir[1] * extra)
+    idx0 = int(t)
+    frac = t - idx0
+    x0, y0 = path[idx0]
+    x1, y1 = path[idx0 + 1]
+    return (x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac)
+
+
+def _path_direction(path, t, exit_dir):
+    """Which way the segment sitting at path-position `t` is currently
+    heading -- the step direction into the next path cell, or `exit_dir`
+    once past the recorded path. Beyond the head's own bend, this is
+    always `exit_dir` and never the body's approach direction into the
+    head, since a piece's exit direction can differ from how its body
+    happened to reach the head cell."""
+    last = len(path) - 1
+    idx0 = int(t)
+    if idx0 >= last:
+        return exit_dir
+    x0, y0 = path[idx0]
+    x1, y1 = path[idx0 + 1]
+    return (x1 - x0, y1 - y0)
 
 
 class FiringAnimation:
-    """Purely visual: a piece sliding forward after being fired. A clear
-    keeps going in `direction` until it's traveled `travel_cells` (its
-    full lane, off the board); a hit travels the same way up to whatever
-    blocked it, then springs back to rest. The actual game-logic outcome
-    (score/lives/board state) is already resolved by the time this is
-    created -- this only tracks how far along the animation is."""
+    """Purely visual: a fired piece slithers along its own body's path
+    like classic Snake -- the head leads off the end of the piece's bent
+    shape into its exit lane, and each trailing segment follows exactly
+    the same route the segment ahead of it just took, straightening out
+    through any corners rather than sliding sideways as a rigid block.
 
-    def __init__(self, piece, direction_vec, travel_cells, outcome):
+    A clear keeps going until the whole piece (including the tail) has
+    passed the board's edge. A hit advances only as far as whatever
+    blocked it, then retraces the identical path back to rest at the
+    same speed. The actual game-logic outcome (score/lives/board state)
+    is already resolved by the time this is created -- this only tracks
+    how far along the animation is."""
+
+    def __init__(self, piece, lane_cells, travel_distance, outcome):
         self.piece = piece
-        self.direction_vec = direction_vec
         self.outcome = outcome
-        # A small minimum so even a zero-distance block still visibly
-        # bumps forward, and an already-at-the-edge clear still visibly
-        # slides rather than just vanishing in place.
-        self.travel_cells = max(travel_cells, 0.5 if outcome == "hit" else 1.0)
-        self.forward_duration = self.travel_cells / FIRE_CELLS_PER_SECOND
-        self.return_duration = HIT_RETURN_DURATION if outcome == "hit" else 0.0
+        self.exit_dir = piece.direction.value
+        self.path = list(piece.cells) + list(lane_cells)
+        self.n = len(piece.cells)
+        if outcome == "clear":
+            # Every segment, including the tail, must pass the last lane
+            # cell to be fully off the board -- the tail (segment 0)
+            # reaches path-position `progress`, so progress needs to
+            # reach the full path length for the whole piece to clear.
+            self.forward_target = len(self.path)
+        else:
+            self.forward_target = max(travel_distance, 0.5)
+        self.progress = 0.0
         self.phase = "forward"
-        self.age = 0.0
         self.done = False
 
     def update(self, dt):
-        self.age += dt
-        if self.phase == "forward" and self.age >= self.forward_duration:
-            if self.outcome == "clear":
+        step = FIRE_CELLS_PER_SECOND * dt
+        if self.phase == "forward":
+            self.progress = min(self.forward_target, self.progress + step)
+            if self.progress >= self.forward_target:
+                if self.outcome == "clear":
+                    self.done = True
+                else:
+                    self.phase = "return"
+        else:
+            self.progress = max(0.0, self.progress - step)
+            if self.progress <= 0.0:
                 self.done = True
-            else:
-                self.phase = "return"
-                self.age = 0.0
-        elif self.phase == "return" and self.age >= self.return_duration:
-            self.done = True
         return not self.done
 
-    def offset_cells(self):
-        if self.phase == "forward":
-            t = min(1.0, self.age / self.forward_duration) if self.forward_duration > 0 else 1.0
-            dist = self.travel_cells * t
-        else:
-            t = min(1.0, self.age / self.return_duration) if self.return_duration > 0 else 1.0
-            dist = self.travel_cells * (1.0 - t)
-        return (self.direction_vec[0] * dist, self.direction_vec[1] * dist)
+    def segment_point(self, i):
+        return _path_point(self.path, self.progress + i, self.exit_dir)
+
+    def segment_direction(self, i):
+        return _path_direction(self.path, self.progress + i, self.exit_dir)
 
 SCOREBOARD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scoreboard.json")
 SCOREBOARD_SIZE = 10
@@ -337,8 +382,7 @@ class Game:
         elif row == 3:
             self.sound.set_music_volume(self.sound.music_volume + 0.1 * direction)
         elif row == 4:
-            new_index = (self.sound.current_track + direction) % len(self.sound.tracks)
-            self.sound.play_music(new_index)
+            self.sound.cycle_music_track(direction)
         self._save_settings()
 
     def _activate_settings(self, row):
@@ -434,6 +478,7 @@ class Game:
 
         piece_cells = list(piece.cells)
         direction = piece.direction
+        lane_cells = self.board.exit_lane(piece)
         travel_cells = self.board.lane_travel(piece)
         result = self.board.fire(cell)
         rect = self.cell_rect(*cell)
@@ -447,7 +492,7 @@ class Game:
             self.sound.play_clear()
             self.score += 10 * self.level * len(piece_cells)
             self.board_dirty = True
-            self.firing_animations.append(FiringAnimation(piece, direction.value, travel_cells, "clear"))
+            self.firing_animations.append(FiringAnimation(piece, lane_cells, travel_cells, "clear"))
             label = random.choice(CELEBRATIONS)
             self.texts.append(FloatingText(label, cx, cy, ACCENT, self.font_small, scale=self.ui_scale))
             if self.board.is_cleared():
@@ -484,7 +529,7 @@ class Game:
             spawn_burst(self.particles, cx, cy, (220, 60, 60), count=10, scale=self.ui_scale)
             self.sound.play_hit()
             self.board_dirty = True
-            self.firing_animations.append(FiringAnimation(piece, direction.value, travel_cells, "hit"))
+            self.firing_animations.append(FiringAnimation(piece, lane_cells, travel_cells, "hit"))
             if self.lives <= 0 or (not infinite_time and self.elapsed >= GAME_TIME_LIMIT):
                 self._end_game()
 
@@ -548,6 +593,7 @@ class Game:
     # -- update ---------------------------------------------------------
 
     def update(self, dt):
+        self.sound.update(dt)
         if self.state == State.PAUSED:
             return
         self.particles = [p for p in self.particles if p.update(dt)]
@@ -636,12 +682,11 @@ class Game:
         cell_px = self.cell_size()
         return pygame.Rect(int(gx * cell_px), int(gy * cell_px), int(cell_px) + 1, int(cell_px) + 1)
 
-    def _draw_piece(self, surf, piece, offset_px=(0, 0)):
-        """Draw one piece's track + per-cell arrows onto `surf`, optionally
-        shifted by `offset_px` -- shared by the cached static board render
-        and the live firing-animation overlay so a sliding/bouncing piece
-        looks identical to its resting appearance."""
-        ox, oy = offset_px
+    def _draw_piece(self, surf, piece):
+        """Draw one piece's track + per-cell arrows onto `surf` at its
+        resting position -- used only for the cached static board render;
+        a firing piece mid-animation is drawn separately, on top, by
+        draw_firing_animations()."""
         color = ARROW_COLORS[piece.direction]
         cell_px = self.cell_size()
         track_px = max(self.S(6), int(cell_px * 0.3))
@@ -653,12 +698,9 @@ class Game:
         # visibly connected while letting the bright arrow stand out.
         track_color = tuple(c // 2 for c in color)
 
-        def rect_at(gx, gy):
-            return self._cell_rect_local(gx, gy).move(ox, oy)
-
         for i in range(len(piece.cells) - 1):
-            r1 = rect_at(*piece.cells[i])
-            r2 = rect_at(*piece.cells[i + 1])
+            r1 = self._cell_rect_local(*piece.cells[i])
+            r2 = self._cell_rect_local(*piece.cells[i + 1])
             cx1, cy1 = r1.centerx, r1.centery
             cx2, cy2 = r2.centerx, r2.centery
             if cx1 == cx2:
@@ -669,7 +711,7 @@ class Game:
 
         last = len(piece.cells) - 1
         for i, (gx, gy) in enumerate(piece.cells):
-            rect = rect_at(gx, gy)
+            rect = self._cell_rect_local(gx, gy)
             draw_arrow(surf, piece.local_direction(i), rect, is_head=(i == last), color=color)
 
     def _render_board_surface(self):
@@ -713,11 +755,27 @@ class Game:
             return
         ox, oy = offset
         cell_px = self.cell_size()
+
+        def px_center(gx, gy):
+            return (gx * cell_px + cell_px / 2, gy * cell_px + cell_px / 2)
+
         overlay = pygame.Surface((self.board_area, self.board_area), pygame.SRCALPHA)
         for anim in self.firing_animations:
-            dx_cells, dy_cells = anim.offset_cells()
-            offset_px = (round(dx_cells * cell_px), round(dy_cells * cell_px))
-            self._draw_piece(overlay, anim.piece, offset_px=offset_px)
+            color = ARROW_COLORS[anim.piece.direction]
+            track_color = tuple(c // 2 for c in color)
+            track_px = max(self.S(6), int(cell_px * 0.3))
+
+            points = [anim.segment_point(i) for i in range(anim.n)]
+            centers = [px_center(*p) for p in points]
+            for i in range(anim.n - 1):
+                pygame.draw.line(overlay, track_color, centers[i], centers[i + 1], track_px)
+
+            last = anim.n - 1
+            for i, (gx, gy) in enumerate(points):
+                rect = pygame.Rect(round(gx * cell_px), round(gy * cell_px), int(cell_px) + 1, int(cell_px) + 1)
+                local_dir = DIR_FROM_DELTA[anim.segment_direction(i)]
+                draw_arrow(overlay, local_dir, rect, is_head=(i == last), color=color)
+
         self.screen.blit(overlay, (self.board_left + ox, self.board_top + oy))
 
     def draw_particles_and_texts(self):
@@ -845,7 +903,7 @@ class Game:
                 self._draw_volume_bar(bar_rect, self.sound.music_volume, selected)
                 self.settings_rows.append(bar_rect)
             elif i == 4:
-                name = self.sound.track_names[self.sound.current_track]
+                name = self.sound.track_label()
                 text = self.font_small.render(f"MUSIC TRACK:  <  {name}  >", True, color)
                 self.screen.blit(text, text.get_rect(center=(self.window_width // 2, row_rect.centery)))
                 self.settings_rows.append(row_rect)

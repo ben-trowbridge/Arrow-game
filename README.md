@@ -10,19 +10,22 @@ it's just Python and two libraries.
 The board is a dense grid packed almost edge-to-edge with twisty arrow
 "snakes" — connected chains of 1 to several cells that bend around
 corners before their final straight leg. Click any cell belonging to one
-to fire the whole thing, and watch it slide in that direction:
+to fire the whole thing, and it moves like the snake it's shaped like:
+the head leads off along its own bent body, and each trailing segment
+slithers through the exact same corners the one ahead of it just took,
+straightening out as it goes.
 
-- **Clear path all the way to the edge?** It slides off the board with a
-  pixel explosion and a ridiculous 8-bit "yeah, man!" jingle. Score goes
-  up (more for longer arrows). The check runs the entire remaining
+- **Clear path all the way to the edge?** It slithers off the board with
+  a pixel explosion and a ridiculous 8-bit "yeah, man!" jingle. Score
+  goes up (more for longer arrows). The check runs the entire remaining
   distance to the edge, not just the next few cells, so anything sitting
   anywhere in its path — however far off — will stop it.
-- **Something in the way?** It slides forward until it bumps into
-  whatever's blocking it, then springs back to where it started — you
-  lose one of your three lives and time gets added to the clock, with a
-  screen shake and a buzzer sound. The penalty escalates with each heart
-  you lose on the current board: 2 seconds for the first, up to 10
-  seconds for the last.
+- **Something in the way?** It slithers forward until it bumps into
+  whatever's blocking it, then retraces its own path backward to where
+  it started — you lose one of your three lives and time gets added to
+  the clock, with a screen shake and a buzzer sound. The penalty
+  escalates with each heart you lose on the current board: 2 seconds for
+  the first, up to 10 seconds for the last.
 
 Each board gives you a fresh 5-minute clock, counting up from 0:00, and a
 full three hearts — both reset at the start of every board. The timer
@@ -80,9 +83,14 @@ during play, to toggle SFX and music on/off, adjust their volumes with
 click-or-drag bars, and pick from 8 original chiptune background tracks
 (Driving Action, Mysterious, Triumphant, Tense Boss, Chill Retro-Pop,
 Dark Ominous, Upbeat Arcade, Epic March) — switching tracks previews it
-immediately. Every setting is saved locally to `settings.json` (also
-gitignored) and restored on the next launch. Navigate with `Up`/`Down`
-to pick a row and `Left`/`Right` to adjust it, or use the mouse.
+immediately. Each track loops through its chord progression 5 times
+before repeating, with the lead melody, register, and drums shifting
+each pass, so a long session doesn't wear the same short clip thin. An
+extra "AUTO ROTATE" option past the last track plays through all 8 in
+sequence, one after another. Every setting is saved locally to
+`settings.json` (also gitignored) and restored on the next launch.
+Navigate with `Up`/`Down` to pick a row and `Left`/`Right` to adjust it,
+or use the mouse.
 
 **Controls:** left-click any cell of an arrow to fire it. `Space` or
 `Enter` to start from the title screen (using the typed seed if any).

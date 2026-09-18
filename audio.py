@@ -126,7 +126,10 @@ def _degree_freq(root_freq, scale, degree, octave_shift=0):
     return root_freq * (2 ** (semitone / 12.0))
 
 
-def _build_track(spec):
+TRACK_REPEATS = 5
+
+
+def _build_track(spec, repeats=TRACK_REPEATS):
     steps_per_bar = spec.get("steps_per_bar", 8)
     scale = spec["scale"]
     root_freq = spec["root_freq"]
@@ -138,23 +141,41 @@ def _build_track(spec):
     bass_vol = spec.get("bass_vol", 0.22)
     lead_vol = spec.get("lead_vol", 0.16)
     drums = spec.get("drums", [None] * steps_per_bar)
+    chords = spec["chords"]
 
     bass_chunks = []
     lead_chunks = []
     drum_chunks = []
-    for chord_root in spec["chords"]:
-        for s in range(steps_per_bar):
-            b_off = bass_arp[s % len(bass_arp)]
-            l_off = lead_arp[s % len(lead_arp)]
-            b_degree = None if b_off is None else chord_root + b_off
-            l_degree = None if l_off is None else chord_root + l_off
-            bass_chunks.append(
-                _pulse_tone(_degree_freq(root_freq, scale, b_degree, -1), step_dur, bass_vol, bass_duty)
-            )
-            lead_chunks.append(
-                _pulse_tone(_degree_freq(root_freq, scale, l_degree, 1), step_dur, lead_vol, lead_duty)
-            )
-            drum_chunks.append(_drum_step(drums[s % len(drums)], step_dur))
+
+    for pass_i in range(repeats):
+        # Same harmonic skeleton every pass through `chords`, but the
+        # phrasing shifts each time so a several-minute game doesn't hear
+        # one identical ~10-second clip on a tight loop: the lead's
+        # contour flips to a call-and-response shape on odd passes,
+        # lifts an extra octave for a bright accent every third pass, and
+        # the drums drop out every fourth pass for a brief breather.
+        pass_lead_arp = lead_arp[::-1] if pass_i % 2 == 1 else lead_arp
+        lead_octave_bonus = 1 if pass_i % 3 == 2 else 0
+        pass_drums = [None] * len(drums) if pass_i % 4 == 3 else drums
+
+        for chord_root in chords:
+            for s in range(steps_per_bar):
+                b_off = bass_arp[s % len(bass_arp)]
+                l_off = pass_lead_arp[s % len(pass_lead_arp)]
+                b_degree = None if b_off is None else chord_root + b_off
+                l_degree = None if l_off is None else chord_root + l_off
+                bass_chunks.append(
+                    _pulse_tone(_degree_freq(root_freq, scale, b_degree, -1), step_dur, bass_vol, bass_duty)
+                )
+                lead_chunks.append(
+                    _pulse_tone(
+                        _degree_freq(root_freq, scale, l_degree, 1 + lead_octave_bonus),
+                        step_dur,
+                        lead_vol,
+                        lead_duty,
+                    )
+                )
+                drum_chunks.append(_drum_step(pass_drums[s % len(pass_drums)], step_dur))
 
     mix = np.concatenate(bass_chunks) + np.concatenate(lead_chunks) + np.concatenate(drum_chunks)
     peak = np.max(np.abs(mix))
@@ -255,6 +276,7 @@ class SoundEngine:
         self.music_enabled = True
         self.music_volume = 0.5
         self.current_track = 0
+        self._auto_rotate_track = 0
 
     @staticmethod
     def _build_clear():
@@ -312,13 +334,48 @@ class SoundEngine:
         self.sfx_volume = max(0.0, min(1.0, volume))
         self._apply_sfx_volume()
 
-    def play_music(self, index):
-        self.current_track = index % len(self.tracks)
-        if not self.music_enabled:
-            return
+    # `current_track` is either a real track index (0..len(tracks)-1,
+    # looping forever) or the AUTO_ROTATE sentinel, in which case
+    # `_auto_rotate_track` is whichever real track is actually playing
+    # right now, advancing to the next one each time it finishes --
+    # tracked via update(), which needs a call once a frame.
+    AUTO_ROTATE = "auto"
+
+    def _play_track(self, index, loop):
         self.music_channel.stop()
-        self.music_channel.play(self.tracks[self.current_track], loops=-1)
+        self.music_channel.play(self.tracks[index], loops=-1 if loop else 0)
         self.music_channel.set_volume(self.music_volume)
+
+    def play_music(self, index):
+        if index == self.AUTO_ROTATE:
+            self.current_track = self.AUTO_ROTATE
+            self._auto_rotate_track = 0
+            if self.music_enabled:
+                self._play_track(self._auto_rotate_track, loop=False)
+            return
+        self.current_track = index % len(self.tracks)
+        if self.music_enabled:
+            self._play_track(self.current_track, loop=True)
+
+    def cycle_music_track(self, direction):
+        """Move to the next/previous choice in the combined list of real
+        tracks plus the trailing AUTO_ROTATE option."""
+        options = list(range(len(self.tracks))) + [self.AUTO_ROTATE]
+        idx = options.index(self.current_track) if self.current_track in options else 0
+        self.play_music(options[(idx + direction) % len(options)])
+
+    def track_label(self):
+        if self.current_track == self.AUTO_ROTATE:
+            return "AUTO ROTATE"
+        return self.track_names[self.current_track]
+
+    def update(self, dt):
+        """Advance auto-rotate to the next track once the current one
+        finishes -- call this once per frame regardless of game state."""
+        if self.current_track == self.AUTO_ROTATE and self.music_enabled:
+            if not self.music_channel.get_busy():
+                self._auto_rotate_track = (self._auto_rotate_track + 1) % len(self.tracks)
+                self._play_track(self._auto_rotate_track, loop=False)
 
     def set_music_enabled(self, enabled):
         self.music_enabled = enabled
@@ -340,7 +397,12 @@ class SoundEngine:
         self._apply_sfx_volume()
         self.music_enabled = music_enabled
         self.music_volume = max(0.0, min(1.0, music_volume))
-        self.current_track = music_track % len(self.tracks)
-        if self.music_enabled:
-            self.music_channel.play(self.tracks[self.current_track], loops=-1)
-            self.music_channel.set_volume(self.music_volume)
+        if music_track == self.AUTO_ROTATE:
+            self.current_track = self.AUTO_ROTATE
+            self._auto_rotate_track = 0
+            if self.music_enabled:
+                self._play_track(self._auto_rotate_track, loop=False)
+        else:
+            self.current_track = music_track % len(self.tracks)
+            if self.music_enabled:
+                self._play_track(self.current_track, loop=True)

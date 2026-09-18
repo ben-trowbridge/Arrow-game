@@ -307,12 +307,17 @@ class Board:
     def is_cleared(self):
         return not self.pieces
 
+    def exit_lane(self, piece):
+        """The cells from just past `piece`'s head to the board's edge,
+        in its exit direction -- the route it would travel if fired."""
+        return self._lane_cells(piece.head, piece.direction)
+
     def lane_travel(self, piece):
         """How many cells `piece` can advance before either running off
         the board (lane fully clear) or slamming into the first occupied
         cell in its path -- used to animate a fire attempt (how far to
         slide) before/independent of actually resolving it via fire()."""
-        lane = self._lane_cells(piece.head, piece.direction)
+        lane = self.exit_lane(piece)
         for i, c in enumerate(lane):
             if c in self.cell_owner:
                 return i
